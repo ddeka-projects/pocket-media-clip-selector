@@ -27,6 +27,11 @@ h2 { font-size:23px; letter-spacing:-.4px; line-height:1.2; }
 .subtle { color:var(--muted); font-size:13px; line-height:1.5; overflow-wrap:anywhere; }
 .context-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; min-height:50px; }
 .context-label { font-size:10px; letter-spacing:1px; color:var(--muted); text-align:right; max-width:68%; overflow-wrap:anywhere; }
+.context-actions { display:flex; align-items:center; justify-content:flex-end; gap:12px; }
+#exit-editor { font-size:12px; white-space:nowrap; }
+.control-notice { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:12px; padding:10px 12px; background:var(--panel); border:1px solid var(--accent); border-radius:10px; font-size:13px; }
+.control-notice p { margin-top:3px; color:var(--muted); font-size:11px; }
+.control-notice button { flex-shrink:0; min-height:36px; font-size:12px; padding:6px 10px; }
 .section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:6px 0 12px; }
 .card-list { margin-top:24px; display:grid; gap:10px; }
 .library-card { display:flex; justify-content:space-between; align-items:center; gap:20px; text-align:left; width:100%; padding:14px; min-height:78px; }
@@ -107,15 +112,23 @@ dialog label { display:block; margin:18px 0 8px; font-size:13px; color:var(--mut
 /* Landscape editing uses the Home Screen viewport, with a wide scrubber and
    compact rows. The inline video leaves room for the controls below it. */
 @media (orientation:landscape) and (min-width:640px) and (max-height:600px) {
+  .gate { max-width:540px; padding:20px 10px; }
+  .gate-symbol { font-size:36px; margin-bottom:8px; }
+  .gate h1 { font-size:24px; margin:6px 0 10px; }
+  .gate .eyebrow { margin-bottom:4px; }
+  .gate p:not(.eyebrow) { font-size:13px; }
+  .gate button { min-height:36px; margin-top:14px; }
   .player-open { --player-footer-space:calc(51px + env(safe-area-inset-bottom)); }
   .player-open .app-header { display:none; }
   .player-open main { position:relative; padding-top:env(safe-area-inset-top); padding-bottom:var(--player-footer-space); }
   .player-open #player-view { display:flex; flex-direction:column; min-height:calc(100vh - env(safe-area-inset-top) - var(--player-footer-space)); min-height:calc(100svh - env(safe-area-inset-top) - var(--player-footer-space)); }
   #player-view > * { flex-shrink:0; }
-  .player-open .context-bar { position:absolute; top:env(safe-area-inset-top); left:max(18px, env(safe-area-inset-left)); min-height:30px; }
+  .player-open .context-bar { position:absolute; top:env(safe-area-inset-top); left:max(18px, env(safe-area-inset-left)); right:max(18px, env(safe-area-inset-right)); min-height:30px; }
   .player-open #back { min-height:30px; font-size:12px; padding:4px 0; }
+  .player-open #exit-editor { min-height:30px; padding:4px 0; }
   .player-open #project-context { display:none; }
-  .media-heading { height:30px; padding:3px 0 5px 82px; gap:8px; }
+  .player-open .control-notice { position:fixed; z-index:4; top:calc(32px + env(safe-area-inset-top)); left:max(18px, env(safe-area-inset-left)); right:max(18px, env(safe-area-inset-right)); max-width:1004px; margin:0 auto; }
+  .media-heading { height:30px; padding:3px 92px 5px 82px; gap:8px; }
   .media-heading h1 { font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .media-heading p { font-size:10px; }
   .video-wrap { border-radius:10px; flex:1 1 0; min-height:92px; }

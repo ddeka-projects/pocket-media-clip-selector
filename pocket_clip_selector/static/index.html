@@ -18,7 +18,7 @@
 <body>
   <header class="app-header">
     <div class="brand"><img src="/assets/icon.svg" alt="" width="32" height="32"><span>Pocket <strong>Clip Selector</strong></span></div>
-    <span class="connection" id="connection">Connecting</span>
+    <span class="connection" id="connection">Opening editor</span>
   </header>
 
   <main>
@@ -28,13 +28,19 @@
       <h1 id="gate-title">Connecting to your PC</h1>
       <p id="gate-detail">Opening your media library…</p>
       <button id="retry" class="primary" hidden>Try again</button>
+      <button id="gate-take-control" class="primary" hidden>Take Control</button>
     </section>
 
     <div id="workspace" hidden>
       <div class="context-bar">
         <button id="back" class="text-button" hidden>‹ Library</button>
-        <p id="project-context" class="context-label">ON YOUR PC</p>
+        <div class="context-actions"><p id="project-context" class="context-label">ON YOUR PC</p><button id="exit-editor" class="text-button" hidden>Exit Editor</button></div>
       </div>
+
+      <aside id="control-notice" class="control-notice" role="alert" hidden>
+        <div><strong id="control-message">Editor control was transferred to another page</strong><p>Take Control to edit here again. Playback can continue.</p></div>
+        <button id="take-control" class="primary">Take Control</button>
+      </aside>
 
       <section id="library-view" aria-labelledby="library-title">
         <div class="section-heading"><div><p class="eyebrow" id="library-kicker">FIND YOUR NEXT SCENE</p><h1 id="library-title">Your projects</h1></div><button id="refresh" class="secondary compact">Refresh</button></div>

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -13,7 +14,7 @@ from fastapi.testclient import TestClient
 from pocket_clip_selector.api import create_app
 from pocket_clip_selector.config import Settings, load_settings
 from pocket_clip_selector.errors import AppError
-from pocket_clip_selector.lease import ControllerLease
+from pocket_clip_selector.controller import ControllerOwnership
 from pocket_clip_selector.library import sort_key
 from pocket_clip_selector.mp4 import duration
 from pocket_clip_selector.process_lock import ProcessLock
@@ -26,14 +27,13 @@ class ServerTests(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve() / "Media Projects"
         self.root.mkdir()
         self.project, self.file = make_project(self.root)
-        self.clock = [100.0]
-        self.lease = ControllerLease(clock=lambda: self.clock[0])
-        self.app = create_app(Settings(self.root), lease=self.lease, lock_library=False)
+        self.controller = ControllerOwnership()
+        self.app = create_app(Settings(self.root), controller=self.controller, lock_library=False)
         self.client = TestClient(self.app)
         self.client.__enter__()
         self.page = "first-page-identity-1234"
         self.token = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()["token"]
-        self.headers = {"X-Page-Id": self.page, "X-Lease-Token": self.token}
+        self.headers = {"X-Page-Id": self.page, "X-Controller-Token": self.token}
         self.query = {"project": self.project}
         self.path = self.root / self.project / ".clipselector" / "selections.json"
 
@@ -139,7 +139,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(edited.status_code, 200)
         with TestClient(create_app(Settings(self.root), lock_library=False)) as restarted:
             token = restarted.post("/api/controller/claim", json={"page_id": "restarted-page-identity"}).json()["token"]
-            headers = {"X-Page-Id": "restarted-page-identity", "X-Lease-Token": token}
+            headers = {"X-Page-Id": "restarted-page-identity", "X-Controller-Token": token}
             result = restarted.get("/api/selections", params=self.query, headers=headers).json()
             self.assertEqual(result["selections"][0]["start"], 19.75)
             removed = restarted.delete("/api/selections/manual-range-identity", params=self.query, headers={**headers, "If-Match": result["revision"]})
@@ -273,7 +273,7 @@ class ServerTests(unittest.TestCase):
         finally:
             junction.rmdir()
 
-    def test_all_library_access_requires_lease_except_stream_and_static(self):
+    def test_all_library_access_requires_control_except_stream_and_static(self):
         for path in ["/api/projects", "/api/project", "/api/selections", "/api/media-info"]:
             response = self.client.get(path, params={**self.query, "file": self.file})
             self.assertEqual(response.status_code, 423)
@@ -295,44 +295,127 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.headers["content-type"], icon["type"])
         self.assertTrue(self.client.get("/assets/apple-touch-icon.png").content.startswith(b"\x89PNG\r\n\x1a\n"))
 
-    def test_second_page_cannot_claim_heartbeat_read_or_mutate(self):
+    def test_first_page_acquires_control_without_timers(self):
+        self.assertTrue(self.token)
+        self.assertEqual(self.client.get("/api/projects", headers=self.headers).status_code, 200)
+        result = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()
+        self.assertEqual(set(result), {"token"})
+        self.assertEqual(self.client.post("/api/controller/heartbeat", json={"page_id": self.page, "token": result["token"]}).status_code, 404)
+
+    def test_second_page_cannot_claim_read_or_mutate_without_takeover(self):
         other = "second-page-identity-1234"
         self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": other}).status_code, 423)
-        bad = {"X-Page-Id": other, "X-Lease-Token": self.token}
-        self.assertEqual(self.client.post("/api/controller/heartbeat", json={"page_id": other, "token": self.token}).status_code, 423)
+        bad = {"X-Page-Id": other, "X-Controller-Token": self.token}
         self.assertEqual(self.client.get("/api/projects", headers=bad).status_code, 423)
         self.assertEqual(self.client.post("/api/selections/capture", params=self.query, headers=bad,
                                         json={"file": self.file, "time": 2, "id": "other-capture-identity"}).status_code, 423)
         self.assertFalse(self.path.exists())
 
-    def test_expiry_reclaim_token_generation_and_stale_write_rejection(self):
-        self.clock[0] += 15
-        self.assertEqual(self.capture().status_code, 409)
+    def test_takeover_invalidates_every_previous_mutation_and_release(self):
+        result = self.capture().json()
+        before = self.path.read_bytes()
         other = "second-page-identity-1234"
-        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": other}).status_code, 200)
-        self.assertEqual(self.capture().status_code, 423)
-        self.clock[0] += 15
-        result = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()
-        self.assertNotEqual(result["token"], self.token)
-        self.assertEqual(self.capture().status_code, 423)
-        self.headers["X-Lease-Token"] = result["token"]
+        token = self.client.post("/api/controller/takeover", json={"page_id": other}).json()["token"]
+        stale = [
+            self.capture(identity="stale-capture-identity"),
+            self.client.post("/api/selections", params=self.query, headers=self.headers,
+                             json={"id": "stale-manual-identity", "file": self.file, "start": 1, "end": 2}),
+            self.client.patch("/api/selections/capture-identity-1234", params=self.query,
+                              headers={**self.headers, "If-Match": result["revision"]}, json={"start": 1, "end": 2}),
+            self.client.delete("/api/selections/capture-identity-1234", params=self.query,
+                               headers={**self.headers, "If-Match": result["revision"]}),
+            self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}),
+        ]
+        for response in stale:
+            self.assertEqual(response.status_code, 423)
+            self.assertEqual(response.json()["error"]["code"], "controller_transferred")
+            self.assertEqual(response.json()["error"]["message"], "Editor control was transferred to another page")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": self.page}).status_code, 423)
+        self.assertEqual(self.client.get("/api/projects", headers={"X-Page-Id": other, "X-Controller-Token": token}).status_code, 200)
+        self.assertEqual(self.client.get("/media", params={**self.query, "file": self.file}, headers={"Range": "bytes=0-1"}).status_code, 206)
+
+    def test_ownership_survives_arbitrary_time_without_requests(self):
+        for now in [0, 15, 86400, 10**12]:
+            with patch("time.monotonic", return_value=now), patch("time.time", return_value=now):
+                with self.controller.authorized(self.page, self.token):
+                    self.assertEqual(self.controller.page, self.page)
+        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": "later-page-identity-1234"}).status_code, 423)
         self.assertEqual(self.capture().status_code, 201)
 
-    def test_heartbeat_and_best_effort_release(self):
-        self.clock[0] += 10
-        self.assertEqual(self.client.post("/api/controller/heartbeat", json={"page_id": self.page, "token": self.token}).status_code, 200)
-        self.clock[0] += 10
-        self.assertEqual(self.capture().status_code, 201)
+    def test_explicit_release_allows_another_page_to_claim(self):
         self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 200)
+        self.assertEqual(self.capture().status_code, 409)
         self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": "another-page-identity"}).status_code, 200)
         self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 423)
 
-    def test_delayed_release_cannot_revoke_same_page_after_resume(self):
+    def test_reentering_editor_invalidates_old_token(self):
+        self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 200)
         reclaimed = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()["token"]
         self.assertNotEqual(reclaimed, self.token)
         self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 423)
-        self.headers["X-Lease-Token"] = reclaimed
+        self.headers["X-Controller-Token"] = reclaimed
         self.assertEqual(self.capture().status_code, 201)
+
+    def test_restart_clears_control_and_rejects_previous_token(self):
+        with TestClient(create_app(Settings(self.root), lock_library=False)) as restarted:
+            self.assertEqual(restarted.get("/api/projects", headers=self.headers).status_code, 409)
+            token = restarted.post("/api/controller/claim", json={"page_id": "new-page-after-restart"}).json()["token"]
+            self.assertEqual(restarted.get("/api/projects", headers={"X-Page-Id": "new-page-after-restart", "X-Controller-Token": token}).status_code, 200)
+            self.assertEqual(restarted.post("/api/selections/capture", params=self.query, headers=self.headers,
+                                            json={"id": "stale-restart-capture", "file": self.file, "time": 10}).status_code, 423)
+        self.assertFalse(self.path.exists())
+
+    def test_takeover_waits_for_in_flight_durable_write(self):
+        writing, commit, transferring = threading.Event(), threading.Event(), threading.Event()
+        order = []
+        original_write, original_claim = self.app.state.store._write, self.controller.claim
+        def held_write(*args):
+            writing.set()
+            if not commit.wait(5): raise AssertionError("Test did not allow the write to finish")
+            result = original_write(*args)
+            order.append("write")
+            return result
+        def observed_claim(*args, **kwargs):
+            transferring.set()
+            result = original_claim(*args, **kwargs)
+            order.append("takeover")
+            return result
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            with patch.object(self.app.state.store, "_write", held_write), patch.object(self.controller, "claim", observed_claim):
+                pending_write = pool.submit(self.capture)
+                try:
+                    self.assertTrue(writing.wait(5))
+                    pending_takeover = pool.submit(self.client.post, "/api/controller/takeover", json={"page_id": "concurrent-new-controller"})
+                    self.assertTrue(transferring.wait(5))
+                    self.assertFalse(pending_takeover.done(), "Takeover must wait for the durable mutation")
+                finally:
+                    commit.set()
+                self.assertEqual(pending_write.result(timeout=5).status_code, 201)
+                takeover = pending_takeover.result(timeout=5)
+                self.assertEqual(takeover.status_code, 200)
+        self.assertEqual(order, ["write", "takeover"])
+        self.assertEqual(self.capture(identity="stale-after-transfer").status_code, 423)
+        response = self.client.post("/api/selections/capture", params=self.query,
+                                    headers={"X-Page-Id": "concurrent-new-controller", "X-Controller-Token": takeover.json()["token"]},
+                                    json={"id": "new-controller-capture", "file": self.file, "time": 80})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(len(json.loads(self.path.read_text())["selections"]), 2)
+
+    def test_queued_stale_write_cannot_commit_after_completed_takeover(self):
+        waiting = threading.Event()
+        original_access = self.controller.authorized
+        def observed_access(page, token):
+            waiting.set()
+            return original_access(page, token)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with patch.object(self.controller, "authorized", observed_access):
+                with self.controller.lock:
+                    pending = pool.submit(self.capture)
+                    self.assertTrue(waiting.wait(5))
+                    self.controller.claim("controller-before-queued-save", takeover=True)
+                self.assertEqual(pending.result(timeout=5).status_code, 423)
+        self.assertFalse(self.path.exists())
 
     def test_foreign_origin_is_rejected_and_input_errors_are_json(self):
         self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": self.page}, headers={"Origin": "https://other.example"}).status_code, 403)

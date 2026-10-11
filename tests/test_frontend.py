@@ -35,7 +35,7 @@ class FrontendTests(unittest.TestCase):
         helpers = (STATIC / "player.js").read_text().replace("export function", "function")
         app = (STATIC / "app.js").read_text()
         app = re.sub(r'^import .*?;\n', '', app, count=1)
-        app = app.rsplit("void connect();", 1)[0]
+        app = app.rsplit("void acquireControl();", 1)[0]
         source = (ROOT / "tests" / "frontend_harness.js").read_text() + "\n" + helpers + "\n" + app + "\n" + (ROOT / "tests" / "frontend_checks.js").read_text()
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "checks.js"

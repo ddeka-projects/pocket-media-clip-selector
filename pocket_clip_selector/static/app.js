@@ -9,10 +9,10 @@ function newId() {
   crypto.getRandomValues(bytes); // Available even on a plain HTTP LAN origin.
   return Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
 }
-const state = { page: newId(), token: null, owned: false, epoch: 0, claimBusy: false, reconnectQueued: false, heartbeatBusy: false,
+const state = { page: newId(), token: null, owned: false, epoch: 0, controlBusy: false,
   project: null, files: [], file: null, view: "library", selections: [], revision: null,
   in: null, out: null, ready: false, saving: false, dragging: false, stopAt: null, pendingSeek: null,
-  editing: null, deleting: null, dialogBusy: false, heartbeat: null, retry: null, toast: null };
+  editing: null, deleting: null, dialogBusy: false, toast: null };
 
 function url(path, extra = {}) {
   const query = new URLSearchParams({ ...(state.project ? { project: state.project } : {}), ...extra });
@@ -25,14 +25,14 @@ class ApiError extends Error {
 }
 
 async function request(path, { method = "GET", body, revision, controller = true } = {}) {
-  if (controller && !state.owned) throw new ApiError("Reconnect before saving.", "lease_expired");
+  if (controller && !state.owned) throw new ApiError("Take Control to edit here again.", "controller_required");
   const epoch = state.epoch;
   const abort = new AbortController();
   const timeout = setTimeout(() => abort.abort(), 12000);
   try {
     const headers = { Accept: "application/json" };
     if (body) headers["Content-Type"] = "application/json";
-    if (controller) { headers["X-Page-Id"] = state.page; headers["X-Lease-Token"] = state.token; }
+    if (controller) { headers["X-Page-Id"] = state.page; headers["X-Controller-Token"] = state.token; }
     if (revision) headers["If-Match"] = revision;
     const response = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined,
       cache: "no-store", credentials: "same-origin", signal: abort.signal });
@@ -55,51 +55,53 @@ function toast(message, error = false) {
   state.toast = setTimeout(() => { $("toast").hidden = true; }, error ? 8000 : 2600);
 }
 
-function disconnect(title, detail, retry = true) {
-  state.owned = false;
-  state.epoch += 1;
-  state.heartbeatBusy = false;
-  clearInterval(state.heartbeat);
-  clearTimeout(state.retry);
-  video.pause();
-  for (const id of ["edit-dialog", "delete-dialog"]) if ($(id).open) $(id).close();
+function showGate(title, detail, { takeover = false, retry = false } = {}) {
   $("workspace").hidden = true;
   $("gate").hidden = false;
   $("gate-title").textContent = title;
   $("gate-detail").textContent = detail;
+  $("gate-take-control").hidden = !takeover;
   $("retry").hidden = !retry;
-  $("connection").textContent = "Disconnected";
-  $("connection").classList.remove("live");
   document.body.classList.remove("player-open");
+}
+
+function loseControl(message) {
+  state.owned = false;
+  state.token = null;
+  state.epoch += 1;
+  for (const id of ["edit-dialog", "delete-dialog"]) if ($(id).open) $(id).close();
+  $("connection").textContent = "Control not held";
+  $("connection").classList.remove("live");
+  if ($("workspace").hidden) {
+    showGate(message, "Tap Take Control to edit on this page.", { takeover: true });
+  } else {
+    $("control-message").textContent = message;
+    $("control-notice").hidden = false;
+  }
   updateControls();
+  if (state.view === "selections") renderSelections();
 }
 
 function handleError(error) {
-  if (["session_changed"].includes(error.code)) return;
-  if (error.code === "lease_conflict") {
-    disconnect("Clip Selector is open elsewhere", "Another tab or device is using the app. Close that page, or wait 15 seconds after it stops responding, then retry.");
-    state.retry = setTimeout(connect, 5000);
-  } else if (error.code === "lease_expired" || error.code === "network_error") {
-    disconnect("Reconnect to your PC", error.message);
-    state.retry = setTimeout(connect, 5000);
-  } else toast(error.message, true);
+  if (error.code === "session_changed") return;
+  if (["controller_occupied", "controller_transferred", "controller_required"].includes(error.code)) loseControl(error.message);
+  else toast(error.message, true);
 }
 
-async function connect() {
-  if (document.hidden) return;
-  if (state.claimBusy) { state.reconnectQueued = true; return; }
-  state.claimBusy = true;
-  clearTimeout(state.retry);
-  const epoch = state.epoch;
+async function acquireControl(takeover = false) {
+  if (state.controlBusy || state.owned) return;
+  state.controlBusy = true; updateControls();
   try {
-    const result = await request("/api/controller/claim", { method: "POST", body: { page_id: state.page }, controller: false });
-    if (document.hidden || epoch !== state.epoch) return;
+    const result = await request(takeover ? "/api/controller/takeover" : "/api/controller/claim", { method: "POST", body: { page_id: state.page }, controller: false });
+    state.epoch += 1;
     state.token = result.token;
     state.owned = true;
-    $("connection").textContent = "PC connected";
+    $("connection").textContent = "Editor active";
     $("connection").classList.add("live");
-    clearInterval(state.heartbeat);
-    state.heartbeat = setInterval(heartbeat, 5000);
+    $("gate").hidden = true;
+    $("workspace").hidden = false;
+    $("control-notice").hidden = true;
+    showView(state.view); updateControls();
     if (state.project) {
       try {
         const project = await request(url("/api/project"));
@@ -116,29 +118,36 @@ async function connect() {
         state.project = null; state.file = null; state.view = "library";
       }
     }
-    $("gate").hidden = true;
-    $("workspace").hidden = false;
     if (state.view === "library") await loadLibrary();
     else if (state.view === "selections") renderSelections();
     showView(state.view);
     updateControls();
   } catch (error) {
-    if (state.owned && !["lease_conflict", "lease_expired", "network_error", "session_changed"].includes(error.code)) {
-      $("gate").hidden = true; $("workspace").hidden = false; showView(state.view); updateControls();
+    if (!state.owned && error.code === "network_error" && $("workspace").hidden) {
+      showGate("Could not open the editor", error.message, { retry: true });
+      $("retry").textContent = "Try again";
     }
     handleError(error);
-  } finally {
-    state.claimBusy = false;
-    if (state.reconnectQueued) { state.reconnectQueued = false; state.retry = setTimeout(connect, 0); }
-  }
+  } finally { state.controlBusy = false; updateControls(); }
 }
 
-async function heartbeat() {
-  if (!state.owned || document.hidden || state.heartbeatBusy) return;
-  state.heartbeatBusy = true;
-  try { await request("/api/controller/heartbeat", { method: "POST", body: { page_id: state.page, token: state.token }, controller: false }); }
-  catch (error) { handleError(error); }
-  finally { state.heartbeatBusy = false; }
+async function exitEditor() {
+  if (!state.owned || state.controlBusy || state.saving || state.dialogBusy) return;
+  state.controlBusy = true; updateControls();
+  try {
+    await request("/api/controller/release", { method: "POST", body: { page_id: state.page, token: state.token } });
+    state.owned = false; state.token = null; state.epoch += 1;
+    video.pause();
+    for (const id of ["edit-dialog", "delete-dialog"]) if ($(id).open) $(id).close();
+    $("connection").textContent = "Editor exited"; $("connection").classList.remove("live");
+    showGate("Editor exited", "Control released. Enter the editor to resume this page.", { retry: true });
+    $("retry").textContent = "Enter Editor";
+  }
+  catch (error) {
+    if (error.code === "network_error") toast("Exit Editor was not confirmed. Playback continues; try Exit Editor again or take control from another page.", true);
+    else handleError(error);
+  }
+  finally { state.controlBusy = false; updateControls(); }
 }
 
 function showView(view) {
@@ -227,9 +236,13 @@ function openMedia(file, selection = null) {
 }
 
 function updateControls() {
-  const ready = state.owned && state.ready;
-  for (const id of ["play", "scrubber", "mark-in", "mark-out"]) $(id).disabled = !ready;
-  for (const button of document.querySelectorAll("[data-skip], [data-rate]")) button.disabled = !ready;
+  const ready = state.owned && state.ready && !state.controlBusy;
+  for (const id of ["play", "scrubber"]) $(id).disabled = !state.ready;
+  for (const button of document.querySelectorAll("[data-skip], [data-rate]")) button.disabled = !state.ready;
+  for (const id of ["mark-in", "mark-out"]) $(id).disabled = !ready;
+  $("exit-editor").hidden = !state.owned;
+  $("exit-editor").disabled = state.controlBusy || state.saving || state.dialogBusy;
+  for (const id of ["retry", "gate-take-control", "take-control"]) $(id).disabled = state.controlBusy;
   $("capture").disabled = !ready || state.saving;
   $("save-range").disabled = !ready || state.saving || state.in === null || state.out === null || state.in >= state.out;
   $("reset-range").disabled = state.in === null && state.out === null;
@@ -248,7 +261,7 @@ function updateTime() {
 }
 
 function seek(time) {
-  if (!state.ready || !state.owned) return;
+  if (!state.ready) return;
   state.stopAt = null; $("replay-note").hidden = true;
   video.currentTime = clampSeek(time, video.duration); updateTime();
 }
@@ -293,15 +306,15 @@ function renderSelections() {
     }
     const card = document.createElement("div"); card.className = "selection-card";
     const replay = makeButton(`${selection.available ? "▶ " : ""}${formatTime(selection.start)} – ${formatTime(selection.end)}`, "selection-replay", () => openMedia(selection.file, selection));
-    replay.disabled = !selection.available;
+    replay.disabled = !selection.available || !state.owned;
     const length = document.createElement("p"); length.className = "selection-length"; length.textContent = `${(selection.end - selection.start).toFixed(3)} seconds`;
     card.append(replay, length);
     if (!selection.available) {
       const note = document.createElement("p"); note.className = "unavailable-note"; note.textContent = "Unavailable · the exact source filename is missing or was renamed."; card.append(note);
     }
     const actions = document.createElement("div"); actions.className = "selection-actions";
-    const edit = makeButton("Adjust", "", () => editSelection(selection)); edit.disabled = !selection.available;
-    const remove = makeButton("Delete", "delete-button", () => deleteSelection(selection));
+    const edit = makeButton("Adjust", "", () => editSelection(selection)); edit.disabled = !selection.available || !state.owned;
+    const remove = makeButton("Delete", "delete-button", () => deleteSelection(selection)); remove.disabled = !state.owned;
     actions.append(edit, remove); card.append(actions); group.append(card);
   }
   $("selections-detail").textContent = `${state.selections.length} saved ${state.selections.length === 1 ? "selection" : "selections"} on your PC. Tap a range to replay it.`;
@@ -318,7 +331,7 @@ function editSelection(selection) {
 function updateEditPreview() {
   const start = $("edit-start").valueAsNumber, end = $("edit-end").valueAsNumber;
   $("edit-preview").textContent = `${formatTime(start)} – ${formatTime(end)}`;
-  $("edit-save").disabled = state.dialogBusy || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end;
+  $("edit-save").disabled = !state.owned || state.dialogBusy || !Number.isFinite(start) || !Number.isFinite(end) || start < 0 || start >= end;
 }
 
 function deleteSelection(selection) {
@@ -332,6 +345,7 @@ async function changeSelection(event, kind) {
   if (state.dialogBusy || !state.owned) return;
   const row = kind === "edit" ? state.editing : state.deleting;
   state.dialogBusy = true;
+  updateControls();
   for (const button of document.querySelectorAll(`#${kind}-dialog button`)) button.disabled = true;
   try {
     const body = kind === "edit" ? { start: $("edit-start").valueAsNumber, end: $("edit-end").valueAsNumber } : undefined;
@@ -347,11 +361,13 @@ async function changeSelection(event, kind) {
   } finally {
     state.dialogBusy = false;
     for (const button of document.querySelectorAll(`#${kind}-dialog button`)) button.disabled = false;
-    updateEditPreview();
+    updateEditPreview(); updateControls();
   }
 }
 
-$("retry").addEventListener("click", connect);
+$("retry").addEventListener("click", () => acquireControl());
+for (const id of ["gate-take-control", "take-control"]) $(id).addEventListener("click", () => acquireControl(true));
+$("exit-editor").addEventListener("click", exitEditor);
 $("refresh").addEventListener("click", () => void loadLibrary().catch(handleError));
 $("back").addEventListener("click", () => {
   if (state.view === "library") { state.project = null; state.file = null; video.removeAttribute("src"); video.load(); }
@@ -390,7 +406,7 @@ function syncRate() {
 }
 video.addEventListener("ratechange", syncRate);
 for (const button of document.querySelectorAll("[data-rate]")) button.addEventListener("click", () => {
-  if (!state.owned || !state.ready) return;
+  if (!state.ready) return;
   const requested = Number(button.dataset.rate), result = acceptedRate(video, requested);
   syncRate(); $("speed-notice").hidden = result.accepted;
   $("speed-notice").textContent = `Safari did not accept ${requested}×. Playing at ${result.rate}×.`;
@@ -411,16 +427,4 @@ for (const kind of ["edit", "delete"]) {
   $(`${kind}-dialog`).addEventListener("cancel", (event) => { if (state.dialogBusy) event.preventDefault(); });
 }
 
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden) { disconnect("Reconnecting", "Checking controller ownership when you return…", false); }
-  else void connect();
-});
-window.addEventListener("pagehide", () => {
-  const token = state.token;
-  if (token) void fetch("/api/controller/release", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ page_id: state.page, token }), keepalive: true }).catch(() => {});
-  disconnect("Reconnecting", "Reopening your local library…", false);
-});
-window.addEventListener("pageshow", (event) => { if (event.persisted) void connect(); });
-window.addEventListener("online", () => { if (!state.owned) void connect(); });
-window.addEventListener("offline", () => disconnect("Your phone is offline", "Reconnect to the same local network as your PC, then try again."));
-void connect();
+void acquireControl();

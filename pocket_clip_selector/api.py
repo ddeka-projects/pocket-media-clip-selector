@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictFloat, StrictStr
 
 from .config import Settings, load_settings
 from .errors import AppError
-from .lease import ControllerLease
+from .controller import ControllerOwnership
 from .library import Library
 from .process_lock import ProcessLock
 from .storage import SelectionStore
@@ -49,11 +49,11 @@ class Capture(Body):
     time: Seconds
 
 
-def create_app(settings: Settings | None = None, *, lease=None, lock_library=True):
+def create_app(settings: Settings | None = None, *, controller=None, lock_library=True):
     settings = settings or load_settings()
     library = Library(settings.working_dir)
     store = SelectionStore(library)
-    controller = lease or ControllerLease()
+    controller = controller or ControllerOwnership()
     process_lock = ProcessLock(settings.working_dir)
 
     @asynccontextmanager
@@ -67,7 +67,7 @@ def create_app(settings: Settings | None = None, *, lease=None, lock_library=Tru
 
     app = FastAPI(title="Pocket Media Clip Selector", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.store = store
-    app.state.lease = controller
+    app.state.controller = controller
 
     def error_response(error):
         return JSONResponse({"error": {"code": error.code, "message": str(error)}}, status_code=error.status)
@@ -100,7 +100,7 @@ def create_app(settings: Settings | None = None, *, lease=None, lock_library=Tru
         return response
 
     def access(request):
-        return controller.authorized(request.headers.get("x-page-id"), request.headers.get("x-lease-token"))
+        return controller.authorized(request.headers.get("x-page-id"), request.headers.get("x-controller-token"))
 
     @app.get("/")
     def home():
@@ -122,9 +122,9 @@ def create_app(settings: Settings | None = None, *, lease=None, lock_library=Tru
     def claim(body: Page):
         return controller.claim(body.page_id)
 
-    @app.post("/api/controller/heartbeat")
-    def heartbeat(body: Owner):
-        return controller.heartbeat(body.page_id, body.token)
+    @app.post("/api/controller/takeover")
+    def takeover(body: Page):
+        return controller.claim(body.page_id, takeover=True)
 
     @app.post("/api/controller/release")
     def release(body: Owner):
