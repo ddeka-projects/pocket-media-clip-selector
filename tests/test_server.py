@@ -281,6 +281,20 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.client.get("/assets/app.js").status_code, 200)
         self.assertEqual(self.client.get("/media", params={**self.query, "file": self.file}, headers={"Range": "bytes=0-1"}).status_code, 206)
 
+    def test_home_screen_manifest_and_icons_are_public(self):
+        response = self.client.get("/assets/manifest.webmanifest")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/manifest+json")
+        manifest = response.json()
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["start_url"], "/")
+        self.assertEqual(manifest["scope"], "/")
+        for icon in manifest["icons"]:
+            response = self.client.get(icon["src"])
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.headers["content-type"], icon["type"])
+        self.assertTrue(self.client.get("/assets/apple-touch-icon.png").content.startswith(b"\x89PNG\r\n\x1a\n"))
+
     def test_second_page_cannot_claim_heartbeat_read_or_mutate(self):
         other = "second-page-identity-1234"
         self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": other}).status_code, 423)

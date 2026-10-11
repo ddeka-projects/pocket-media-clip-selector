@@ -3,7 +3,7 @@ function equal(actual, expected, message) { assert(actual === expected, `${messa
 function setup() {
   Object.assign(state, { project: "A show – 日本語", file: "[Any name] # café.mp4", files: [{ name: "[Any name] # café.mp4" }],
     owned: true, ready: true, token: "live-token", in: null, out: null, saving: false, stopAt: null });
-  Object.assign(fakeVideo, { paused: false, pauseCalls: 0, currentTime: 50.125, duration: 120.5 });
+  Object.assign(fakeVideo, { paused: false, pauseCalls: 0, currentTime: 50.125, duration: 120.5, playbackRate: 1 });
 }
 async function checks() {
   equal(formatTime(502.25), "8:22.250", "fractional display");
@@ -17,6 +17,40 @@ async function checks() {
   equal(acceptedRate(ignored, 3).rate, 0.5, "show actual rate when ignored");
   equal(acceptedRate(fakeVideo, 0.25).accepted, true, "accepted quarter speed");
   assert(newId() !== newId(), "page identities are unique");
+
+  setup();
+  updateControls();
+  for (const button of fakeRates) {
+    button.listeners.click[0]();
+    equal(fakeVideo.playbackRate, Number(button.dataset.rate), "speed tap changes playback rate");
+    equal(button.getAttribute("aria-pressed"), "true", "accepted speed is selected");
+    equal(fakeRates.filter(node => node.getAttribute("aria-pressed") === "true").length, 1, "only the accepted speed is selected");
+  }
+  equal(fakeVideo.pauseCalls, 0, "changing speed keeps playback running");
+  fakeVideo.playbackRate = 1.5;
+  fakeVideo.listeners.ratechange[0]();
+  equal(element("actual-speed").hidden, false, "external unsupported preset remains visible");
+  equal(element("actual-speed").textContent, "1.5× actual", "external native speed is reported");
+  assert(fakeRates.every(node => node.getAttribute("aria-pressed") === "false"), "no incorrect preset is selected");
+  Object.defineProperty(fakeVideo, "playbackRate", { configurable: true, get() { return 1; }, set(value) { throw new Error("unsupported"); } });
+  fakeRates[4].listeners.click[0]();
+  equal(fakeRates[2].getAttribute("aria-pressed"), "true", "rejected speed retains actual normal rate");
+  equal(element("speed-notice").hidden, false, "rejected speed has visible feedback");
+  Object.defineProperty(fakeVideo, "playbackRate", { configurable: true, writable: true, value: 1 });
+  fakeSkips[0].listeners.click[0]();
+  equal(fakeVideo.currentTime, 45.125, "back five seconds keeps precision");
+  fakeSkips[1].listeners.click[0]();
+  equal(fakeVideo.currentTime, 50.125, "forward five seconds keeps precision");
+  showView("player");
+  assert(document.body.classList.contains("player-open"), "editing activates the compact landscape layout");
+  equal(element("media-navigation").hidden, false, "video navigation is available while editing");
+  showView("selections");
+  assert(!document.body.classList.contains("player-open"), "selections returns to the browsing layout");
+  equal(element("media-navigation").hidden, true, "video navigation is hidden outside the player");
+  disconnect("Disconnected", "Connection lost");
+  assert([...fakeRates, ...fakeSkips].every(button => button.disabled), "transport disables on lease loss");
+  fakeRates[0].listeners.click[0]();
+  equal(fakeVideo.playbackRate, 1, "disabled rate cannot change playback");
 
   setup();
   let sent;

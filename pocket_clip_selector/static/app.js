@@ -70,6 +70,7 @@ function disconnect(title, detail, retry = true) {
   $("retry").hidden = !retry;
   $("connection").textContent = "Disconnected";
   $("connection").classList.remove("live");
+  document.body.classList.remove("player-open");
   updateControls();
 }
 
@@ -142,8 +143,10 @@ async function heartbeat() {
 
 function showView(view) {
   state.view = view;
+  document.body.classList.toggle("player-open", view === "player");
   if (view !== "player") video.pause();
   for (const name of ["library", "player", "selections"]) $(`${name}-view`).hidden = name !== view;
+  $("media-navigation").hidden = view !== "player";
   $("tabs").hidden = !state.project;
   $("player-tab").disabled = !state.file;
   $("player-tab").setAttribute("aria-current", view === "player" ? "page" : "false");
@@ -225,8 +228,8 @@ function openMedia(file, selection = null) {
 
 function updateControls() {
   const ready = state.owned && state.ready;
-  for (const id of ["play", "scrubber", "speed", "mark-in", "mark-out"]) $(id).disabled = !ready;
-  for (const button of document.querySelectorAll("[data-skip]")) button.disabled = !ready;
+  for (const id of ["play", "scrubber", "mark-in", "mark-out"]) $(id).disabled = !ready;
+  for (const button of document.querySelectorAll("[data-skip], [data-rate]")) button.disabled = !ready;
   $("capture").disabled = !ready || state.saving;
   $("save-range").disabled = !ready || state.saving || state.in === null || state.out === null || state.in >= state.out;
   $("reset-range").disabled = state.in === null && state.out === null;
@@ -376,16 +379,22 @@ for (const event of ["change", "pointerup", "pointercancel"]) $("scrubber").addE
 
 function syncRate() {
   const actual = video.playbackRate;
-  let option = Array.from($("speed").options).find((entry) => Math.abs(Number(entry.value) - actual) < 0.001);
-  if (!option) { option = document.createElement("option"); option.value = String(actual); option.textContent = `${actual}× (actual)`; $("speed").append(option); }
-  $("speed").value = option.value;
+  let matched = false;
+  for (const button of document.querySelectorAll("[data-rate]")) {
+    const selected = Math.abs(Number(button.dataset.rate) - actual) < 0.001;
+    button.setAttribute("aria-pressed", String(selected));
+    matched ||= selected;
+  }
+  $("actual-speed").hidden = matched;
+  $("actual-speed").textContent = `${actual}× actual`;
 }
 video.addEventListener("ratechange", syncRate);
-$("speed").addEventListener("change", () => {
-  const requested = Number($("speed").value), result = acceptedRate(video, requested);
+for (const button of document.querySelectorAll("[data-rate]")) button.addEventListener("click", () => {
+  if (!state.owned || !state.ready) return;
+  const requested = Number(button.dataset.rate), result = acceptedRate(video, requested);
   syncRate(); $("speed-notice").hidden = result.accepted;
   $("speed-notice").textContent = `Safari did not accept ${requested}×. Playing at ${result.rate}×.`;
-  if (result.accepted && requested >= 2) { $("speed-notice").hidden = false; $("speed-notice").textContent = "If Safari limits speed or mutes audio at this rate, choose a lower speed."; }
+  if (result.accepted && requested >= 2) { $("speed-notice").hidden = false; $("speed-notice").textContent = "Audio or effective speed may be limited by Safari at this rate."; }
 });
 $("capture").addEventListener("click", () => void save("capture"));
 $("mark-in").addEventListener("click", () => { state.in = video.currentTime; updateControls(); });

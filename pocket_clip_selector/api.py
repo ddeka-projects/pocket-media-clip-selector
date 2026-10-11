@@ -108,7 +108,8 @@ def create_app(settings: Settings | None = None, *, lease=None, lock_library=Tru
 
     @app.get("/assets/{name}")
     def asset(name: str):
-        allowed = {"app.js": "text/javascript", "player.js": "text/javascript", "styles.css": "text/css", "icon.svg": "image/svg+xml"}
+        allowed = {"app.js": "text/javascript", "player.js": "text/javascript", "styles.css": "text/css", "icon.svg": "image/svg+xml",
+                   "manifest.webmanifest": "application/manifest+json", "apple-touch-icon.png": "image/png"}
         if name not in allowed:
             raise AppError("Asset not found.", 404, "unavailable")
         return FileResponse(STATIC / name, media_type=allowed[name])

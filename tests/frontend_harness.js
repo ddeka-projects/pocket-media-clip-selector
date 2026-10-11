@@ -4,11 +4,15 @@ class Element {
   constructor(id) {
     this.id = id; this.hidden = false; this.disabled = false; this.textContent = "";
     this.value = ""; this.children = []; this.listeners = {}; this.attributes = {};
-    this.options = []; this.open = false; this.dataset = {};
-    this.classList = { toggle() {}, add() {}, remove() {} };
+    this.open = false; this.dataset = {};
+    const classes = new Set();
+    this.classList = {
+      toggle(name, force = !classes.has(name)) { if (force) classes.add(name); else classes.delete(name); },
+      add(name) { classes.add(name); }, remove(name) { classes.delete(name); }, contains(name) { return classes.has(name); }
+    };
   }
   addEventListener(name, action) { (this.listeners[name] ||= []).push(action); }
-  append(...nodes) { this.children.push(...nodes); if (this.id === "speed") this.options.push(...nodes); }
+  append(...nodes) { this.children.push(...nodes); }
   replaceChildren() { this.children = []; }
   setAttribute(name, value) { this.attributes[name] = value; }
   getAttribute(name) { return this.attributes[name]; }
@@ -21,10 +25,10 @@ function element(id) { if (!elements.has(id)) elements.set(id, new Element(id));
 const fakeVideo = element("video");
 Object.assign(fakeVideo, { currentTime: 0, duration: 120.5, playbackRate: 1, paused: false, pauseCalls: 0,
   pause() { this.paused = true; this.pauseCalls++; }, play() { this.paused = false; return Promise.resolve(); }, load() {} });
-element("speed").options = [0.25, 0.5, 1, 2, 3].map(value => ({ value: String(value) }));
-const fakeSkips = [-15, -5, 5, 15].map(value => { const node = new Element("skip"); node.dataset.skip = String(value); return node; });
-globalThis.document = { hidden: false, getElementById: element, createElement: (tag) => new Element(tag), addEventListener() {},
-  querySelectorAll: (selector) => selector === "[data-skip]" ? fakeSkips : [] };
+const fakeSkips = [-5, 5].map(value => { const node = new Element("skip"); node.dataset.skip = String(value); return node; });
+const fakeRates = [0.25, 0.5, 1, 2, 3].map(value => { const node = new Element("rate"); node.dataset.rate = String(value); return node; });
+globalThis.document = { hidden: false, body: element("body"), getElementById: element, createElement: (tag) => new Element(tag), addEventListener() {},
+  querySelectorAll: (selector) => ({ "[data-skip]": fakeSkips, "[data-rate]": fakeRates, "[data-skip], [data-rate]": [...fakeSkips, ...fakeRates] }[selector] || []) };
 globalThis.window = { addEventListener() {}, scrollTo() {} };
 let randomCounter = 0;
 globalThis.crypto = { getRandomValues: (bytes) => { bytes.fill(0); bytes[0] = ++randomCounter; return bytes; } };
