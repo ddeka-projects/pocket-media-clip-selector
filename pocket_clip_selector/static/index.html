@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101817">
+  <title>Pocket Clip Selector</title>
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><img src="/assets/icon.svg" alt="" width="32" height="32"><span>Pocket <strong>Clip Selector</strong></span></div>
+    <span class="connection" id="connection">Connecting</span>
+  </header>
+
+  <main>
+    <section id="gate" class="gate" aria-labelledby="gate-title">
+      <div class="gate-symbol" aria-hidden="true">◫</div>
+      <p class="eyebrow">YOUR LOCAL LIBRARY</p>
+      <h1 id="gate-title">Connecting to your PC</h1>
+      <p id="gate-detail">Opening your media library…</p>
+      <button id="retry" class="primary" hidden>Try again</button>
+    </section>
+
+    <div id="workspace" hidden>
+      <div class="context-bar">
+        <button id="back" class="text-button" hidden>‹ Library</button>
+        <p id="project-context" class="context-label">ON YOUR PC</p>
+      </div>
+
+      <section id="library-view" aria-labelledby="library-title">
+        <div class="section-heading"><div><p class="eyebrow" id="library-kicker">FIND YOUR NEXT SCENE</p><h1 id="library-title">Your projects</h1></div><button id="refresh" class="secondary compact">Refresh</button></div>
+        <p class="subtle" id="library-detail">Choose a project to start watching.</p>
+        <div id="library-list" class="card-list"></div>
+      </section>
+
+      <section id="player-view" hidden aria-labelledby="media-title">
+        <div class="media-heading"><h1 id="media-title"></h1><p id="media-index" class="subtle"></p></div>
+        <div class="video-wrap"><video id="video" playsinline controls preload="metadata" aria-label="Selected video"></video></div>
+        <p id="video-error" class="error-message" role="alert" hidden></p>
+        <p id="replay-note" class="replay-note" hidden></p>
+        <div class="transport">
+          <div class="time-row"><button id="play" class="secondary play-button" disabled>Play</button><span><span id="current-time">0:00.000</span><span class="subtle"> / <span id="duration">—</span></span></span></div>
+          <label class="sr-only" for="scrubber">Seek through video</label>
+          <input id="scrubber" type="range" min="0" max="1" step="0.01" value="0" disabled>
+          <div class="skip-row" aria-label="Skip through video"><button data-skip="-15" disabled>−15<span>seconds</span></button><button data-skip="-5" disabled>−5<span>seconds</span></button><button data-skip="5" disabled>+5<span>seconds</span></button><button data-skip="15" disabled>+15<span>seconds</span></button></div>
+          <div class="speed-row"><label for="speed">Playback speed</label><select id="speed" disabled><option value="0.25">0.25×</option><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="3">3×</option></select></div>
+          <p class="subtle speed-notice" id="speed-notice" role="status" hidden></p>
+        </div>
+        <div class="capture-area"><button id="capture" class="primary capture" disabled><span aria-hidden="true">＋</span> Capture Moment</button><p class="capture-hint">15 seconds before + 15 seconds after · saves as you watch</p></div>
+        <div class="manual-range">
+          <p class="eyebrow">MAKE A LONGER SELECTION</p>
+          <div class="marks"><button id="mark-in" class="secondary" disabled>Mark IN<span id="in-value">—</span></button><button id="mark-out" class="secondary" disabled>Mark OUT<span id="out-value">—</span></button></div>
+          <div class="range-actions"><button id="save-range" class="secondary" disabled>Save Range</button><button id="reset-range" class="text-button" disabled>Reset</button></div>
+          <p id="range-detail" class="subtle">Mark the beginning and end while watching.</p>
+        </div>
+        <div class="media-navigation"><button id="previous" class="secondary">‹ Previous video</button><button id="next" class="secondary">Next video ›</button></div>
+      </section>
+
+      <section id="selections-view" hidden aria-labelledby="selections-title">
+        <div class="section-heading"><div><p class="eyebrow">READY FOR ANOTHER LOOK</p><h1 id="selections-title">Saved selections</h1></div><button id="refresh-selections" class="secondary compact">Refresh</button></div>
+        <p class="subtle" id="selections-detail">Saved on your PC. Tap a range to replay it.</p>
+        <div id="selections-list" class="selection-list"></div>
+      </section>
+
+      <nav class="view-tabs" id="tabs" aria-label="Project views" hidden><button id="player-tab">▶ Player</button><button id="selections-tab">◫ Selections <span id="selection-count">0</span></button></nav>
+    </div>
+  </main>
+
+  <dialog id="edit-dialog" aria-labelledby="edit-title">
+    <form id="edit-form">
+      <p class="eyebrow">REFINE YOUR SELECTION</p><h2 id="edit-title">Adjust range</h2><p class="subtle" id="edit-file"></p>
+      <label for="edit-start">Start · seconds</label><div class="nudge-field"><button type="button" data-nudge="start:-0.5" aria-label="Start half a second earlier">−0.5</button><input id="edit-start" type="number" min="0" step="any" inputmode="decimal" required><button type="button" data-nudge="start:0.5" aria-label="Start half a second later">+0.5</button></div>
+      <label for="edit-end">End · seconds</label><div class="nudge-field"><button type="button" data-nudge="end:-0.5" aria-label="End half a second earlier">−0.5</button><input id="edit-end" type="number" min="0" step="any" inputmode="decimal" required><button type="button" data-nudge="end:0.5" aria-label="End half a second later">+0.5</button></div>
+      <p class="subtle" id="edit-preview"></p><p id="edit-error" class="error-message" role="alert" hidden></p>
+      <div class="dialog-actions"><button type="button" id="edit-cancel" class="secondary">Cancel</button><button id="edit-save" class="primary">Save changes</button></div>
+    </form>
+  </dialog>
+  <dialog id="delete-dialog" aria-labelledby="delete-title"><form id="delete-form"><h2 id="delete-title">Delete this selection?</h2><p class="subtle" id="delete-detail"></p><p class="subtle">This removes the saved range from your PC.</p><p id="delete-error" class="error-message" role="alert" hidden></p><div class="dialog-actions"><button type="button" id="delete-cancel" class="secondary">Keep selection</button><button id="delete-confirm" class="danger">Delete</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <noscript><p class="error-message">Enable JavaScript in Safari to use Clip Selector.</p></noscript>
+</body>
+</html>
