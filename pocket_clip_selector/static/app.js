@@ -248,7 +248,9 @@ function updateControls() {
   $("reset-range").disabled = state.in === null && state.out === null;
   $("in-value").textContent = formatTime(state.in);
   $("out-value").textContent = formatTime(state.out);
-  $("range-detail").textContent = state.in !== null && state.out !== null && state.in >= state.out ? "IN must be earlier than OUT. Mark either point again." : "Mark the beginning and end while watching.";
+  const invalidRange = state.in !== null && state.out !== null && state.in >= state.out;
+  $("range-detail").classList.toggle("invalid-range", invalidRange);
+  $("range-detail").textContent = invalidRange ? "IN must be earlier than OUT. Mark either point again." : "Mark the beginning and end while watching.";
 }
 
 function updateTime() {
