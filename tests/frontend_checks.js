@@ -74,6 +74,7 @@ async function checks() {
   for (const button of fakeRates) {
     button.listeners.click[0]();
     equal(fakeVideo.playbackRate, Number(button.dataset.rate), "speed tap changes playback rate");
+    equal(element("speed-notice").hidden, true, "accepted speeds do not show a warning below the video");
     equal(button.getAttribute("aria-pressed"), "true", "accepted speed is selected");
     equal(fakeRates.filter(node => node.getAttribute("aria-pressed") === "true").length, 1, "only the accepted speed is selected");
   }

@@ -412,7 +412,6 @@ for (const button of document.querySelectorAll("[data-rate]")) button.addEventLi
   const requested = Number(button.dataset.rate), result = acceptedRate(video, requested);
   syncRate(); $("speed-notice").hidden = result.accepted;
   $("speed-notice").textContent = `Safari did not accept ${requested}×. Playing at ${result.rate}×.`;
-  if (result.accepted && requested >= 2) { $("speed-notice").hidden = false; $("speed-notice").textContent = "Audio or effective speed may be limited by Safari at this rate."; }
 });
 $("capture").addEventListener("click", () => void save("capture"));
 $("mark-in").addEventListener("click", () => { state.in = video.currentTime; updateControls(); });
