@@ -60,7 +60,9 @@
                 <button id="play" class="secondary play-button" disabled>Play</button>
                 <button data-skip="-5" aria-label="Skip back five seconds" disabled>−5 s</button>
                 <button data-skip="5" aria-label="Skip forward five seconds" disabled>+5 s</button>
+                <button data-rate="1" aria-label="Normal speed" aria-pressed="true" disabled>1×</button>
               </div>
+              <span id="actual-speed" class="subtle" hidden></span>
               <span class="playback-time"><span id="current-time">0:00.000</span><span class="subtle"> / <span id="duration">—</span></span></span>
             </div>
             <label class="sr-only" for="scrubber">Seek through video</label>
@@ -73,10 +75,8 @@
             <span class="speed-label" aria-hidden="true">Speed</span>
             <button data-rate="0.25" aria-label="Quarter speed" aria-pressed="false" disabled>0.25×</button>
             <button data-rate="0.5" aria-label="Half speed" aria-pressed="false" disabled>0.5×</button>
-            <button data-rate="1" aria-label="Normal speed" aria-pressed="true" disabled>1×</button>
             <button data-rate="2" aria-label="Double speed" aria-pressed="false" disabled>2×</button>
             <button data-rate="3" aria-label="Triple speed" aria-pressed="false" disabled>3×</button>
-            <span id="actual-speed" class="subtle" hidden></span>
           </div>
           <div class="selection-tools">
             <div class="capture-area"><button id="capture" class="primary capture" aria-describedby="capture-hint" disabled><span aria-hidden="true">＋</span> Capture Moment</button><p id="capture-hint" class="capture-hint">±15 sec · saves while playing</p></div>
@@ -99,7 +99,7 @@
 
       <div class="project-navigation">
         <nav id="media-navigation" class="media-navigation" aria-label="Video navigation" hidden><button id="previous" class="secondary" aria-label="Previous video" title="Previous video"><span aria-hidden="true">‹</span><span class="nav-label"> Previous video</span></button><button id="next" class="secondary" aria-label="Next video" title="Next video"><span class="nav-label">Next video </span><span aria-hidden="true">›</span></button></nav>
-        <nav class="view-tabs" id="tabs" aria-label="Project views" hidden><button id="player-tab">▶ Player</button><button id="selections-tab">◫ Selections <span id="selection-count">0</span></button></nav>
+        <nav class="view-tabs" id="tabs" aria-label="Project views" hidden><button id="player-tab">▶ Player</button><button id="selections-tab"><span class="selections-icon" aria-hidden="true">◫ </span>Selections <span id="selection-count">0</span></button></nav>
       </div>
     </div>
   </main>
