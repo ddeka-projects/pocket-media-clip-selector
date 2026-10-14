@@ -34,7 +34,7 @@ $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCo
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($null -ne $existingTask) { Stop-ScheduledTask -TaskName $TaskName }
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $taskPrincipal `
-    -Settings $settings -Description "Serves the local clip-selection app at this user's logon." -Force | Out-Null
+    -Settings $settings -Description "Serves the local media bookmark app at this user's logon." -Force | Out-Null
 Start-ScheduledTask -TaskName $TaskName
 Write-Host "Installed and started '$TaskName' as $($currentIdentity.Name), at user logon." -ForegroundColor Green
 Write-Host "Logs: $repositoryRoot\logs. Phone URL: http://<PC IPv4 address from ipconfig>:$configuredPort"

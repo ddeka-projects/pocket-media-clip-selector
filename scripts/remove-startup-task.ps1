@@ -18,4 +18,4 @@ if ($RemoveFirewall) {
         Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     }
 }
-Write-Host "Startup task stopped and removed. Media and saved selections are retained."
+Write-Host "Startup task stopped and removed. Media and bookmarks are retained."

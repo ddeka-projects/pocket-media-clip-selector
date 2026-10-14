@@ -18,6 +18,7 @@ from pocket_clip_selector.controller import ControllerOwnership
 from pocket_clip_selector.library import sort_key
 from pocket_clip_selector.mp4 import duration
 from pocket_clip_selector.process_lock import ProcessLock
+from pocket_clip_selector.storage import CATEGORIES, MAX_SECONDS, source_key, source_name, next_episode, following_episode
 from helpers import make_project, mp4_bytes
 
 
@@ -35,40 +36,336 @@ class ServerTests(unittest.TestCase):
         self.token = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()["token"]
         self.headers = {"X-Page-Id": self.page, "X-Controller-Token": self.token}
         self.query = {"project": self.project}
-        self.path = self.root / self.project / ".clipselector" / "selections.json"
+        self.source = "Episode 01"
+        self.path = self.root / self.project / ".clipselector" / "project.json"
 
     def tearDown(self):
         self.client.__exit__(None, None, None)
         self.temporary.cleanup()
 
-    def capture(self, moment=50.125, identity="capture-identity-1234"):
-        return self.client.post("/api/selections/capture", params=self.query, headers=self.headers,
-                                json={"file": self.file, "time": moment, "id": identity})
+    def snapshot(self):
+        response = self.client.get("/api/project", params=self.query, headers=self.headers)
+        self.assertEqual(response.status_code, 200, response.text)
+        return response.json()
 
-    def test_discovery_only_immediate_projects_and_top_level_mp4(self):
-        make_project(self.root, "z Project", "no conventions.MP4")
-        make_project(self.root, "a project", "z.mp4")
-        (self.root / "loose.mp4").write_bytes(b"loose")
+    def revision(self):
+        return {**self.headers, "If-Match": self.snapshot()["revision"]}
+
+    def prepare(self, category="Anime", file=None):
+        response = self.client.post("/api/project/initialize", params=self.query, headers=self.revision(), json={"category": category})
+        self.assertEqual(response.status_code, 200, response.text)
+        response = self.add_source(self.source, file)
+        self.assertEqual(response.status_code, 201, response.text)
+        return response.json()
+
+    def add_source(self, name, file=None):
+        return self.client.post("/api/sources", params=self.query, headers=self.revision(), json={"name": name, "media_file": file})
+
+    def bookmark(self, time=50.125, identity="bookmark-identity-1234", source=None, headers=None):
+        return self.client.post("/api/bookmarks", params={**self.query, "source": source or self.source}, headers=headers or self.headers, json={"time": time, "id": identity})
+
+    def test_project_creation_categories_status_and_listing_counts(self):
+        for index, category in enumerate(CATEGORIES):
+            with self.subTest(category=category):
+                response = self.client.post("/api/projects", headers=self.headers, json={"name": f"新 Project {index}", "category": category})
+                self.assertEqual(response.status_code, 201, response.text)
+                self.assertEqual(response.json()["category"], category)
+                self.assertEqual(response.json()["status"], "Discovering")
+                self.assertEqual(response.json()["next_source_name"], "Episode 01")
+                self.assertEqual(response.json()["media"], [])
+        self.prepare()
+        self.bookmark()
+        updated = self.client.patch("/api/project", params=self.query, headers=self.revision(), json={"status": "Editing"})
+        self.assertEqual(updated.status_code, 200)
+        rows = self.client.get("/api/projects", headers=self.headers).json()["projects"]
+        row = next(row for row in rows if row["name"] == self.project)
+        self.assertEqual((row["category"], row["status"], row["source_count"], row["bookmark_count"]), ("Anime", "Editing", 1, 1))
+        self.assertEqual(self.client.patch("/api/project", params=self.query, headers=self.revision(), json={"status": "Completed"}).status_code, 422)
+
+    def test_creation_rejects_unsafe_names_categories_and_collisions(self):
+        for name in ["", "..", "../escape", "/tmp", "D:\\outside", "bad?name", "CON", "aux.txt", "LPT1", "end.", "x"*101, "a\x00b"]:
+            with self.subTest(name=name):
+                self.assertIn(self.client.post("/api/projects", headers=self.headers, json={"name": name, "category": "Anime"}).status_code, [400, 422])
+        before = list(self.root.iterdir())
+        self.assertEqual(self.client.post("/api/projects", headers=self.headers, json={"name": "Nope", "category": "Music"}).status_code, 422)
+        self.assertEqual(list(self.root.iterdir()), before)
+        for name in [self.project, self.project.upper()]:
+            self.assertEqual(self.client.post("/api/projects", headers=self.headers, json={"name": name, "category": "Anime"}).status_code, 409)
+
+    def test_external_folder_initialization_preserves_media_processor_files(self):
+        folder = self.root / self.project
+        (folder / "Source").mkdir()
+        original = folder / "Source" / "stream.mkv"; original.write_bytes(b"original")
+        self.path.parent.mkdir()
+        manifest = self.path.parent / "manifest.json"; manifest.write_bytes(b'{"processor":true}')
+        old_metadata = self.path.parent / "selections.json"; old_metadata.write_bytes(b"obsolete and ignored")
+        watched = [folder / self.file, original, manifest, old_metadata]
+        before = [path.read_bytes() for path in watched]
+        self.assertFalse(self.snapshot()["initialized"])
+        self.prepare()
+        self.assertEqual([path.read_bytes() for path in watched], before)
+        self.assertEqual(self.client.post("/api/project/initialize", params=self.query, headers=self.revision(), json={"category": "Donghua"}).status_code, 409)
+
+    def test_discovery_is_nonrecursive_and_new_folders_need_no_manifest(self):
+        (self.root / "Empty").mkdir()
         folder = self.root / self.project
         for name in ["Source", ".clipselector", "Nested"]:
-            nested = folder / name
-            nested.mkdir()
-            (nested / "must-ignore.mp4").write_bytes(b"nested")
-        (folder / "original.mkv").write_bytes(b"source")
-        (folder / "B.mp4").write_bytes(mp4_bytes())
-        (folder / "b-second.MP4").write_bytes(mp4_bytes())
-        result = self.client.get("/api/projects", headers=self.headers).json()["projects"]
-        self.assertEqual([row["name"] for row in result], sorted([self.project, "z Project", "a project"], key=lambda name: (name.casefold(), name)))
-        media = self.client.get("/api/project", params=self.query, headers=self.headers).json()["media"]
-        self.assertEqual([row["name"] for row in media], sorted([self.file, "B.mp4", "b-second.MP4"], key=lambda name: (name.casefold(), name)))
-        self.assertEqual(next(row for row in result if row["name"] == self.project)["media_count"], 3)
+            nested = folder / name; nested.mkdir(); (nested / "ignored.mp4").write_bytes(mp4_bytes())
+        (folder / "original.mkv").write_bytes(b"original")
+        (folder / "B.MP4").write_bytes(mp4_bytes())
+        media = self.snapshot()["media"]
+        self.assertEqual([row["name"] for row in media], sorted([self.file, "B.MP4"], key=sort_key))
+        empty = self.client.get("/api/project", params={"project":"Empty"}, headers=self.headers).json()
+        self.assertFalse(empty["initialized"]); self.assertEqual(empty["sources"], [])
+        self.assertFalse((self.root / "Empty" / ".clipselector").exists())
 
-    def test_empty_project_and_no_manifest_needed(self):
-        (self.root / "Empty movie").mkdir()
-        self.assertEqual(self.client.get("/api/project", params={"project": "Empty movie"}, headers=self.headers).json()["media"], [])
-        self.assertFalse(self.path.parent.exists())
-        self.assertEqual(self.client.get("/api/selections", params=self.query, headers=self.headers).json()["selections"], [])
-        self.assertFalse(self.path.parent.exists())
+    def test_source_names_for_all_categories_and_sequential_defaults(self):
+        for category in CATEGORIES:
+            project = self.client.post("/api/projects", headers=self.headers, json={"name": category, "category": category}).json()
+            self.assertEqual(project["next_source_name"], "Episode 01")
+            for name, next_name in [("Episode 01", "Episode 02"), ("ep02", "Episode 03"), ("OVA 1", "Episode 03")]:
+                response = self.client.post("/api/sources", params={"project": category}, headers={**self.headers,"If-Match": project["revision"]}, json={"name": name})
+                self.assertEqual(response.status_code, 201, response.text)
+                project = response.json(); self.assertEqual(project["next_source_name"], next_name)
+
+    def test_duplicate_create_and_rename_point_to_existing_source(self):
+        self.prepare()
+        self.add_source("Episode 07")
+        self.add_source("OVA 1")
+        self.add_source("Season 2 - Episode 1")
+        for name in ["episode 07", " Episode   07 ", "Episode 7", "EP 7", "ep07", "Episode 007"]:
+            with self.subTest(name=name):
+                response = self.add_source(name)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(response.json()["error"]["source"], "Episode 07")
+                renamed = self.client.patch("/api/source", params={**self.query,"source":"OVA 1"}, headers=self.revision(), json={"name":name,"media_file":None})
+                self.assertEqual(renamed.status_code, 409)
+                self.assertEqual(renamed.json()["error"]["source"], "Episode 07")
+        self.assertEqual(self.add_source("ova   1").status_code, 409)
+        self.assertEqual(self.add_source("__proto__").status_code, 201)
+        for name in [" ", "a"*101, "a\x00b", "a\nb"]:
+            self.assertEqual(self.add_source(name).status_code, 422)
+
+    def test_bookmarks_without_media_sorted_edited_deleted_and_restarted(self):
+        (self.root / self.project / self.file).unlink()
+        self.prepare()
+        for index, time in enumerate([1062, 0, 1061.999, 1062, 50000]):
+            response = self.bookmark(time, f"bookmark-{index:016}")
+            self.assertEqual(response.status_code, 201, response.text)
+        marks = self.snapshot()["sources"][0]["bookmarks"]
+        self.assertEqual([row["time"] for row in marks], [0,1061.999,1062,1062,50000])
+        self.assertTrue(all(set(row)=={"id","time"} for row in marks))
+        changed = self.client.patch(f'/api/bookmarks/{marks[0]["id"]}', params={**self.query,"source":self.source}, headers=self.revision(), json={"time":42})
+        self.assertEqual(changed.status_code, 200)
+        with TestClient(create_app(Settings(self.root),lock_library=False)) as restarted:
+            token = restarted.post("/api/controller/claim",json={"page_id":"restarted-page-identity"}).json()["token"]
+            headers = {"X-Page-Id":"restarted-page-identity","X-Controller-Token":token}
+            result = restarted.get("/api/project",params=self.query,headers=headers).json()
+            self.assertEqual(result["sources"][0]["bookmarks"][0]["time"],42)
+            self.assertEqual(restarted.delete(f'/api/bookmarks/{marks[0]["id"]}',params={**self.query,"source":self.source},headers={**headers,"If-Match":result["revision"]}).status_code,200)
+        self.assertEqual(len(json.loads(self.path.read_text())["sources"][self.source]["bookmarks"]),4)
+
+    def test_invalid_bookmark_values_and_obsolete_endpoints(self):
+        self.prepare(); before=self.path.read_bytes()
+        for time in [-1,True,"1742",None,MAX_SECONDS+1]:
+            self.assertEqual(self.bookmark(time).status_code,422)
+        for time in [float("nan"),float("inf")]:
+            response=self.client.post("/api/bookmarks",params={**self.query,"source":self.source},headers={**self.headers,"Content-Type":"application/json"},content=json.dumps({"id":"invalid-bookmark-id","time":time}))
+            self.assertEqual(response.status_code,422)
+        self.assertEqual(self.path.read_bytes(),before)
+        self.assertEqual(self.bookmark(MAX_SECONDS).status_code,201)
+        self.assertEqual(self.client.post("/api/selections",params=self.query,headers=self.headers,json={}).status_code,404)
+        self.assertEqual(self.client.post("/api/bookmarks",params={**self.query,"source":self.source},headers=self.headers,json={"id":"no-range-identity","time":1,"start":0,"end":2}).status_code,422)
+
+    def test_repeated_bookmark_requests_are_idempotent_but_nearby_times_are_kept(self):
+        self.prepare()
+        first=self.bookmark().json()
+        self.assertEqual(self.bookmark().json()["revision"],first["revision"])
+        self.assertEqual(self.bookmark(60).status_code,409)
+        self.assertEqual(self.bookmark(50.126,"nearby-bookmark-id").status_code,201)
+        self.assertEqual(self.snapshot()["bookmark_count"],2)
+
+    def test_rename_association_reassociation_and_remove_preserve_physical_media(self):
+        self.prepare(); self.bookmark()
+        response=self.client.patch("/api/source",params={**self.query,"source":self.source},headers=self.revision(),json={"name":"OVA 1","media_file":self.file})
+        self.assertEqual(response.status_code,200)
+        original=(self.root/self.project/self.file).read_bytes()
+        make_project(self.root,self.project,"Next.mp4")
+        changed=self.client.patch("/api/source",params={**self.query,"source":"OVA 1"},headers=self.revision(),json={"name":"Movie","media_file":"Next.mp4"})
+        self.assertEqual(changed.status_code,200)
+        row=changed.json()["sources"][0]
+        self.assertTrue(row["available"]); self.assertEqual(row["bookmarks"][0]["time"],50.125)
+        self.assertEqual(self.client.delete("/api/source",params={**self.query,"source":"Movie"},headers=self.revision()).status_code,200)
+        self.assertEqual((self.root/self.project/self.file).read_bytes(),original)
+        self.assertTrue((self.root/self.project/"Next.mp4").exists())
+        self.assertEqual(self.snapshot()["sources"],[])
+
+    def test_missing_association_does_not_block_manual_bookmarks_or_rename(self):
+        self.prepare(file=self.file); self.bookmark()
+        path=self.root/self.project/self.file; path.rename(path.with_name(self.file.upper()))
+        self.assertFalse(self.snapshot()["sources"][0]["available"])
+        self.assertEqual(self.bookmark(999,"missing-media-bookmark").status_code,201)
+        renamed=self.client.patch("/api/source",params={**self.query,"source":self.source},headers=self.revision(),json={"name":"Part 1","media_file":self.file})
+        self.assertEqual(renamed.status_code,200); self.assertEqual(renamed.json()["bookmark_count"],2)
+        self.assertEqual(renamed.json()["sources"][0]["media_file"],self.file)
+
+    def test_partial_source_changes_preserve_omitted_name_or_association(self):
+        self.prepare(file=self.file)
+        self.bookmark()
+        renamed = self.client.patch("/api/source", params={**self.query, "source": self.source}, headers=self.revision(), json={"name": "Movie"})
+        self.assertEqual(renamed.status_code, 200, renamed.text)
+        self.assertEqual(renamed.json()["sources"][0]["media_file"], self.file)
+        unlinked = self.client.patch("/api/source", params={**self.query, "source": "Movie"}, headers=self.revision(), json={"media_file": None})
+        self.assertEqual(unlinked.status_code, 200)
+        row = unlinked.json()["sources"][0]
+        self.assertEqual(row["name"], "Movie")
+        self.assertIsNone(row["media_file"])
+        self.assertEqual(row["bookmarks"][0]["time"], 50.125)
+
+    def test_unsafe_associations_and_project_paths_are_rejected(self):
+        self.prepare()
+        for file in ["../outside.mp4","Source/nested.mp4","D:\\outside.mp4","original.mkv","movie.mp4:stream","/tmp/movie.mp4"]:
+            self.assertEqual(self.add_source("Episode 02",file).status_code,400)
+            self.assertEqual(self.client.get("/media",params={**self.query,"file":file}).status_code,400)
+        for project in ["..","../escape","/tmp","D:\\outside"]:
+            self.assertEqual(self.client.get("/api/project",params={"project":project},headers=self.headers).status_code,400)
+        self.assertEqual(self.add_source("Missing","missing.mp4").status_code,404)
+
+    def test_stale_revision_blocks_every_destructive_change(self):
+        self.prepare(); self.bookmark(); before=self.path.read_bytes()
+        query={**self.query,"source":self.source}; stale={**self.headers,"If-Match":"stale"}
+        responses=[self.client.patch("/api/project",params=self.query,headers=stale,json={"status":"Editing"}),
+          self.client.post("/api/sources",params=self.query,headers=stale,json={"name":"Another"}),
+          self.client.patch("/api/source",params=query,headers=stale,json={"name":"Rename","media_file":None}),
+          self.client.delete("/api/source",params=query,headers=stale),
+          self.client.patch("/api/bookmarks/bookmark-identity-1234",params=query,headers=stale,json={"time":1}),
+          self.client.delete("/api/bookmarks/bookmark-identity-1234",params=query,headers=stale)]
+        for response in responses:self.assertEqual(response.status_code,409,response.text)
+        self.assertEqual(self.path.read_bytes(),before)
+
+    def test_atomic_failure_and_fsync_failure_preserve_project_media_and_manifest(self):
+        self.prepare(); self.bookmark()
+        manifest=self.path.parent/"manifest.json"; manifest.write_bytes(b'{"processor":true}')
+        files=[self.path,self.root/self.project/self.file,manifest]; before=[path.read_bytes() for path in files]
+        for operation in ["os.replace","os.fsync"]:
+            with self.assertLogs("uvicorn.error",level="ERROR"),patch(f"pocket_clip_selector.storage.{operation}",side_effect=OSError("disk failure")):
+                self.assertEqual(self.bookmark(70,"failed-bookmark-id").status_code,500)
+            self.assertEqual([path.read_bytes() for path in files],before)
+            self.assertEqual(list(self.path.parent.glob(".*.tmp")),[])
+
+    def test_damaged_metadata_is_not_overwritten_and_other_projects_are_browseable(self):
+        self.path.parent.mkdir()
+        for payload in [b"",b"not json",b'{"version":2}',b'{"version":1,"category":"Anime","status":"Discovering","sources":{"EP1":{"media_file":null,"bookmarks":[]},"Episode 01":{"media_file":null,"bookmarks":[]}}}',b'{"version":1,"category":"Anime","status":"Discovering","sources":{},"sources":{}}']:
+            self.path.write_bytes(payload)
+            self.assertEqual(self.client.get("/api/project",params=self.query,headers=self.headers).status_code,500)
+            response=self.client.post("/api/project/initialize",params=self.query,headers={**self.headers,"If-Match":"anything"},json={"category":"Anime"})
+            self.assertEqual(response.status_code,500); self.assertEqual(self.path.read_bytes(),payload)
+            rows=self.client.get("/api/projects",headers=self.headers).json()["projects"]
+            self.assertIn("error",next(row for row in rows if row["name"]==self.project))
+
+    def test_external_change_during_write_is_detected_before_replacement(self):
+        self.prepare()
+        changed = json.loads(self.path.read_text())
+        changed["status"] = "Editing"
+        payload = json.dumps(changed).encode("utf-8")
+        with patch("pocket_clip_selector.storage.os.fsync", side_effect=lambda descriptor: self.path.write_bytes(payload)):
+            response = self.bookmark()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.path.read_bytes(), payload)
+        self.assertEqual(list(self.path.parent.glob(".*.tmp")), [])
+
+    def test_failed_new_project_write_can_be_initialized_without_deleting_folder(self):
+        with self.assertLogs("uvicorn.error", level="ERROR"), patch("pocket_clip_selector.storage.os.replace", side_effect=OSError("disk failure")):
+            response = self.client.post("/api/projects", headers=self.headers, json={"name": "Recoverable", "category": "Anime"})
+        self.assertEqual(response.status_code, 500)
+        snapshot = self.client.get("/api/project", params={"project": "Recoverable"}, headers=self.headers).json()
+        self.assertFalse(snapshot["initialized"])
+        self.assertTrue((self.root / "Recoverable").is_dir())
+        response = self.client.post("/api/project/initialize", params={"project": "Recoverable"}, headers={**self.headers, "If-Match": snapshot["revision"]}, json={"category": "Anime"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["initialized"])
+
+    def test_symlink_projects_media_metadata_and_destination_are_blocked(self):
+        outside=Path(self.temporary.name).resolve()/"outside"; outside.mkdir(); (outside/"secret.mp4").write_bytes(mp4_bytes())
+        try: (self.root/"link-project").symlink_to(outside,target_is_directory=True)
+        except OSError: self.skipTest("Symlinks require Windows Developer Mode or elevation.")
+        folder=self.root/self.project; (folder/"linked.mp4").symlink_to(outside/"secret.mp4")
+        self.assertEqual(self.client.get("/media",params={"project":"link-project","file":"secret.mp4"}).status_code,400)
+        self.assertEqual(self.client.get("/media",params={**self.query,"file":"linked.mp4"}).status_code,400)
+        (folder/".clipselector").symlink_to(outside,target_is_directory=True)
+        self.assertEqual(self.client.get("/api/project",params=self.query,headers=self.headers).status_code,400)
+        (folder/".clipselector").unlink(); self.path.parent.mkdir()
+        secret=outside/"project.json"; secret.write_bytes(b"private"); self.path.symlink_to(secret)
+        self.assertEqual(self.client.get("/api/project",params=self.query,headers=self.headers).status_code,400)
+        self.assertEqual(secret.read_bytes(),b"private")
+        self.assertFalse((outside/"manifest.json").exists())
+        self.assertNotIn("link-project",[row["name"] for row in self.client.get("/api/projects",headers=self.headers).json()["projects"]])
+
+    def test_all_library_and_mutation_routes_require_controller(self):
+        for path in ["/api/projects","/api/project","/api/media-info"]:
+            self.assertEqual(self.client.get(path,params={**self.query,"file":self.file}).status_code,423)
+        self.assertEqual(self.client.post("/api/projects",json={"name":"Blocked","category":"Anime"}).status_code,423)
+        self.assertEqual(self.client.get("/").status_code,200)
+        self.assertEqual(self.client.get("/media",params={**self.query,"file":self.file},headers={"Range":"bytes=0-1"}).status_code,206)
+
+    def test_manual_ownership_claim_takeover_release_and_restart(self):
+        self.prepare(); self.bookmark(); before=self.path.read_bytes()
+        other="second-page-identity-1234"
+        self.assertEqual(self.client.post("/api/controller/claim",json={"page_id":other}).status_code,423)
+        token=self.client.post("/api/controller/takeover",json={"page_id":other}).json()["token"]
+        self.assertEqual(self.bookmark(60,"stale-bookmark-id").status_code,423)
+        query={**self.query,"source":self.source}
+        for response in [self.client.patch("/api/source",params=query,headers=self.headers,json={"name":"Rename"}),self.client.delete("/api/source",params=query,headers=self.headers),self.client.post("/api/controller/release",json={"page_id":self.page,"token":self.token})]:self.assertEqual(response.status_code,423)
+        self.assertEqual(self.path.read_bytes(),before)
+        self.assertEqual(self.client.post("/api/controller/release",json={"page_id":other,"token":token}).status_code,200)
+        claimed=self.client.post("/api/controller/claim",json={"page_id":self.page}).json()["token"]
+        self.assertNotEqual(claimed,self.token)
+        self.headers["X-Controller-Token"]=claimed
+        self.assertEqual(self.bookmark(60,"new-bookmark-identity").status_code,201)
+        with TestClient(create_app(Settings(self.root),lock_library=False)) as restarted:
+            self.assertEqual(restarted.get("/api/project",params=self.query,headers=self.headers).status_code,409)
+            token=restarted.post("/api/controller/claim",json={"page_id":other}).json()["token"]
+            self.assertEqual(restarted.get("/api/project",params=self.query,headers=self.headers).status_code,423)
+        self.assertEqual(self.client.post("/api/controller/heartbeat",json={}).status_code,404)
+
+    def test_ownership_does_not_expire_and_transfer_waits_for_durable_write(self):
+        self.prepare()
+        for now in [0,15,86400,10**12]:
+            with patch("time.monotonic",return_value=now),patch("time.time",return_value=now):
+                with self.controller.authorized(self.page,self.token):self.assertEqual(self.controller.page,self.page)
+        writing,commit,transferring=threading.Event(),threading.Event(),threading.Event(); order=[]
+        original_write,original_claim=self.app.state.store._write,self.controller.claim
+        def held_write(*args):
+            writing.set()
+            if not commit.wait(5):raise AssertionError("Write did not resume")
+            result=original_write(*args); order.append("write"); return result
+        def observed_claim(*args,**kwargs):
+            transferring.set(); result=original_claim(*args,**kwargs); order.append("takeover"); return result
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            with patch.object(self.app.state.store,"_write",held_write),patch.object(self.controller,"claim",observed_claim):
+                pending=pool.submit(self.bookmark)
+                try:
+                    self.assertTrue(writing.wait(5)); takeover=pool.submit(self.client.post,"/api/controller/takeover",json={"page_id":"next-controller-identity"})
+                    self.assertTrue(transferring.wait(5)); self.assertFalse(takeover.done())
+                finally:commit.set()
+                self.assertEqual(pending.result(timeout=5).status_code,201); self.assertEqual(takeover.result(timeout=5).status_code,200)
+        self.assertEqual(order,["write","takeover"])
+        self.assertEqual(self.bookmark(70,"after-transfer-bookmark").status_code,423)
+
+    def test_queued_stale_write_cannot_commit_after_takeover(self):
+        self.prepare(); before=self.path.read_bytes(); waiting=threading.Event(); original=self.controller.authorized
+        def observed(page,token):waiting.set(); return original(page,token)
+        with ThreadPoolExecutor(max_workers=1) as pool,patch.object(self.controller,"authorized",observed):
+            with self.controller.lock:
+                pending=pool.submit(self.bookmark); self.assertTrue(waiting.wait(5)); self.controller.claim("replacement-controller",takeover=True)
+            self.assertEqual(pending.result(timeout=5).status_code,423)
+        self.assertEqual(self.path.read_bytes(),before)
+
+    def test_concurrent_adds_and_duplicate_requests_do_not_lose_bookmarks(self):
+        self.prepare(); store=self.app.state.store
+        def add(index):return store.add_bookmark(self.project,self.source,{"id":f"parallel-bookmark-{index:016}","time":index})
+        with ThreadPoolExecutor(max_workers=4) as pool:list(pool.map(add,list(range(12))*2))
+        self.assertEqual(self.snapshot()["bookmark_count"],12)
 
     def test_full_stream_and_middle_byte_range_preserve_exact_names(self):
         query = {**self.query, "file": self.file}
@@ -120,148 +417,6 @@ class ServerTests(unittest.TestCase):
         for value in ["bytes=0-1,5-6", "items=0-1"]:
             self.assertEqual(self.client.get("/media", params=query, headers={"Range": value}).status_code, 200)
 
-    def test_capture_fractional_time_and_clamping(self):
-        for index, moment in enumerate([2.125, 50.125, 119.75, 0, 120.5]):
-            response = self.capture(moment, f"identity-{index:016}")
-            self.assertEqual(response.status_code, 201, response.text)
-            saved = next(row for row in response.json()["selections"] if row["id"] == f"identity-{index:016}")
-            self.assertEqual(saved["start"], max(0, moment - 15))
-            self.assertEqual(saved["end"], min(120.5, moment + 15))
-        self.assertEqual(len(json.loads(self.path.read_text())["selections"]), 5)
-
-    def test_manual_add_edit_delete_and_restart_persistence(self):
-        response = self.client.post("/api/selections", params=self.query, headers=self.headers,
-                                    json={"id": "manual-range-identity", "file": self.file, "start": 20.25, "end": 80.875})
-        self.assertEqual(response.status_code, 201)
-        revision = response.json()["revision"]
-        edited = self.client.patch("/api/selections/manual-range-identity", params=self.query,
-                                   headers={**self.headers, "If-Match": revision}, json={"start": 19.75, "end": 81.375})
-        self.assertEqual(edited.status_code, 200)
-        with TestClient(create_app(Settings(self.root), lock_library=False)) as restarted:
-            token = restarted.post("/api/controller/claim", json={"page_id": "restarted-page-identity"}).json()["token"]
-            headers = {"X-Page-Id": "restarted-page-identity", "X-Controller-Token": token}
-            result = restarted.get("/api/selections", params=self.query, headers=headers).json()
-            self.assertEqual(result["selections"][0]["start"], 19.75)
-            removed = restarted.delete("/api/selections/manual-range-identity", params=self.query, headers={**headers, "If-Match": result["revision"]})
-            self.assertEqual(removed.status_code, 200)
-            self.assertEqual(json.loads(self.path.read_text())["selections"], [])
-
-    def test_selection_order_is_filename_then_timestamp(self):
-        make_project(self.root, self.project, "Z.mp4")
-        for index, (file, start) in enumerate([("Z.mp4", 10), (self.file, 30), (self.file, 5)]):
-            response = self.client.post("/api/selections", params=self.query, headers=self.headers,
-                                        json={"id": f"sort-identity-{index:016}", "file": file, "start": start, "end": start + 2})
-            self.assertEqual(response.status_code, 201)
-        self.assertEqual([(row["file"], row["start"]) for row in response.json()["selections"]], [(self.file, 5), (self.file, 30), ("Z.mp4", 10)])
-
-    def test_duplicate_capture_id_is_idempotent(self):
-        self.assertEqual(self.capture().status_code, 201)
-        self.assertEqual(len(self.capture().json()["selections"]), 1)
-        self.assertEqual(self.capture(60).status_code, 409)
-
-    def test_invalid_ranges_never_create_metadata(self):
-        for start, end in [(2, 2), (4, 1), (-1, 5), (0, 121), (True, 3), ("1", 3)]:
-            response = self.client.post("/api/selections", params=self.query, headers=self.headers,
-                                        json={"id": "invalid-range-identity", "file": self.file, "start": start, "end": end})
-            self.assertEqual(response.status_code, 422)
-        response = self.client.post("/api/selections", params=self.query, headers={**self.headers, "Content-Type": "application/json"},
-                                    content=json.dumps({"id": "invalid-range-identity", "file": self.file, "start": 0, "end": float("inf")}))
-        self.assertEqual(response.status_code, 422)
-        self.assertEqual(self.capture(999).status_code, 422)
-        self.assertFalse(self.path.parent.exists())
-
-    def test_stale_revision_blocks_edit_and_delete(self):
-        result = self.capture().json()
-        before = self.path.read_bytes()
-        for method in ["patch", "delete"]:
-            arguments = {"params": self.query, "headers": {**self.headers, "If-Match": "stale"}}
-            if method == "patch": arguments["json"] = {"start": 1, "end": 2}
-            response = getattr(self.client, method)("/api/selections/capture-identity-1234", **arguments)
-            self.assertEqual(response.status_code, 409)
-            self.assertEqual(self.path.read_bytes(), before)
-        self.assertNotEqual(result["revision"], "stale")
-
-    def test_missing_and_case_renamed_media_stays_unavailable(self):
-        self.capture()
-        original = self.root / self.project / self.file
-        renamed = original.with_name("replacement.mp4")
-        original.rename(renamed)
-        response = self.client.get("/api/selections", params=self.query, headers=self.headers)
-        self.assertFalse(response.json()["selections"][0]["available"])
-        self.assertEqual(response.json()["selections"][0]["file"], self.file)
-        # Even if the filesystem would match it case-insensitively, don't reattach.
-        renamed.rename(original.with_name(self.file.upper()))
-        self.assertFalse(self.client.get("/api/selections", params=self.query, headers=self.headers).json()["selections"][0]["available"])
-        revision = response.json()["revision"]
-        self.assertEqual(self.client.delete("/api/selections/capture-identity-1234", params=self.query, headers={**self.headers, "If-Match": revision}).status_code, 200)
-
-    def test_atomic_replacement_failure_leaves_old_data_and_source_intact(self):
-        folder = self.root / self.project
-        (folder / "Source").mkdir()
-        original = folder / "Source" / "download.mkv"
-        original.write_bytes(b"original")
-        self.capture()
-        manifest = self.path.parent / "manifest.json"
-        manifest.write_bytes(b'{"owned_by":"processor"}')
-        watched = [self.path, folder / self.file, original, manifest]
-        before = [path.read_bytes() for path in watched]
-        with self.assertLogs("uvicorn.error", level="ERROR"), patch("pocket_clip_selector.storage.os.replace", side_effect=OSError("simulated disk failure")):
-            response = self.capture(60, "failed-capture-identity")
-        self.assertEqual(response.status_code, 500)
-        self.assertEqual(response.json()["error"]["code"], "storage_error")
-        self.assertEqual([path.read_bytes() for path in watched], before)
-        self.assertEqual(list(self.path.parent.glob("*.tmp")), [])
-        self.assertEqual(list(self.path.parent.glob(".*.tmp")), [])
-
-    def test_fsync_failure_preserves_old_data(self):
-        self.capture()
-        old = self.path.read_bytes()
-        with self.assertLogs("uvicorn.error", level="ERROR"), patch("pocket_clip_selector.storage.os.fsync", side_effect=OSError("simulated failure")):
-            self.assertEqual(self.capture(70, "fsync-failure-identity").status_code, 500)
-        self.assertEqual(self.path.read_bytes(), old)
-
-    def test_corrupt_or_unsupported_storage_never_overwritten(self):
-        self.path.parent.mkdir()
-        for payload in [b"", b"not json", b'{"version":2,"selections":[]}', b'{"version":1,"selections":[{}]}']:
-            self.path.write_bytes(payload)
-            self.assertEqual(self.capture().status_code, 500)
-            self.assertEqual(self.path.read_bytes(), payload)
-
-    def test_path_traversal_absolute_subfolder_and_stream_extension_blocked(self):
-        for project, file in [("..", self.file), ("../escape", self.file), ("/tmp", self.file), ("D:\\outside", self.file),
-                              (self.project, "../outside.mp4"), (self.project, "Source/nested.mp4"), (self.project, "D:\\outside.mp4"),
-                              (self.project, "original.mkv"), (self.project, "movie.mp4:stream")]:
-            with self.subTest(project=project, file=file):
-                response = self.client.get("/media", params={"project": project, "file": file})
-                self.assertEqual(response.status_code, 400)
-        for project in ["..", "../escape", "/tmp", "D:\\outside"]:
-            self.assertEqual(self.client.get("/api/selections", params={"project": project}, headers=self.headers).status_code, 400)
-
-    def test_symlink_projects_media_metadata_and_destination_are_blocked(self):
-        outside = Path(self.temporary.name).resolve() / "outside"
-        outside.mkdir()
-        (outside / "secret.mp4").write_bytes(mp4_bytes())
-        try:
-            (self.root / "link-project").symlink_to(outside, target_is_directory=True)
-        except OSError:
-            self.skipTest("Symlinks need Developer Mode or elevation on this Windows machine.")
-        folder = self.root / self.project
-        (folder / "linked.mp4").symlink_to(outside / "secret.mp4")
-        self.assertEqual(self.client.get("/media", params={"project": "link-project", "file": "secret.mp4"}).status_code, 400)
-        self.assertEqual(self.client.get("/media", params={**self.query, "file": "linked.mp4"}).status_code, 400)
-        (folder / ".clipselector").symlink_to(outside, target_is_directory=True)
-        self.assertEqual(self.capture().status_code, 400)
-        self.assertFalse((outside / "selections.json").exists())
-        (folder / ".clipselector").unlink()
-        self.path.parent.mkdir()
-        secret = outside / "selections.json"
-        secret.write_text('{"version":1,"selections":[]}', encoding="utf-8")
-        self.path.symlink_to(secret)
-        self.assertEqual(self.capture().status_code, 400)
-        self.assertEqual(secret.read_text(), '{"version":1,"selections":[]}')
-        names = [item["name"] for item in self.client.get("/api/projects", headers=self.headers).json()["projects"]]
-        self.assertNotIn("link-project", names)
-
     @unittest.skipUnless(os.name == "nt", "Windows junction test runs on the target PC")
     def test_windows_junction_is_blocked(self):
         outside = Path(self.temporary.name) / "outside"
@@ -272,14 +427,6 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(self.client.get("/api/project", params={"project": "junction"}, headers=self.headers).status_code, 400)
         finally:
             junction.rmdir()
-
-    def test_all_library_access_requires_control_except_stream_and_static(self):
-        for path in ["/api/projects", "/api/project", "/api/selections", "/api/media-info"]:
-            response = self.client.get(path, params={**self.query, "file": self.file})
-            self.assertEqual(response.status_code, 423)
-        self.assertEqual(self.client.get("/").status_code, 200)
-        self.assertEqual(self.client.get("/assets/app.js").status_code, 200)
-        self.assertEqual(self.client.get("/media", params={**self.query, "file": self.file}, headers={"Range": "bytes=0-1"}).status_code, 206)
 
     def test_home_screen_manifest_and_icons_are_public(self):
         response = self.client.get("/assets/manifest.webmanifest")
@@ -295,145 +442,12 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(response.headers["content-type"], icon["type"])
         self.assertTrue(self.client.get("/assets/apple-touch-icon.png").content.startswith(b"\x89PNG\r\n\x1a\n"))
 
-    def test_first_page_acquires_control_without_timers(self):
-        self.assertTrue(self.token)
-        self.assertEqual(self.client.get("/api/projects", headers=self.headers).status_code, 200)
-        result = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()
-        self.assertEqual(set(result), {"token"})
-        self.assertEqual(self.client.post("/api/controller/heartbeat", json={"page_id": self.page, "token": result["token"]}).status_code, 404)
-
-    def test_second_page_cannot_claim_read_or_mutate_without_takeover(self):
-        other = "second-page-identity-1234"
-        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": other}).status_code, 423)
-        bad = {"X-Page-Id": other, "X-Controller-Token": self.token}
-        self.assertEqual(self.client.get("/api/projects", headers=bad).status_code, 423)
-        self.assertEqual(self.client.post("/api/selections/capture", params=self.query, headers=bad,
-                                        json={"file": self.file, "time": 2, "id": "other-capture-identity"}).status_code, 423)
-        self.assertFalse(self.path.exists())
-
-    def test_takeover_invalidates_every_previous_mutation_and_release(self):
-        result = self.capture().json()
-        before = self.path.read_bytes()
-        other = "second-page-identity-1234"
-        token = self.client.post("/api/controller/takeover", json={"page_id": other}).json()["token"]
-        stale = [
-            self.capture(identity="stale-capture-identity"),
-            self.client.post("/api/selections", params=self.query, headers=self.headers,
-                             json={"id": "stale-manual-identity", "file": self.file, "start": 1, "end": 2}),
-            self.client.patch("/api/selections/capture-identity-1234", params=self.query,
-                              headers={**self.headers, "If-Match": result["revision"]}, json={"start": 1, "end": 2}),
-            self.client.delete("/api/selections/capture-identity-1234", params=self.query,
-                               headers={**self.headers, "If-Match": result["revision"]}),
-            self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}),
-        ]
-        for response in stale:
-            self.assertEqual(response.status_code, 423)
-            self.assertEqual(response.json()["error"]["code"], "controller_transferred")
-            self.assertEqual(response.json()["error"]["message"], "Editor control was transferred to another page")
-        self.assertEqual(self.path.read_bytes(), before)
-        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": self.page}).status_code, 423)
-        self.assertEqual(self.client.get("/api/projects", headers={"X-Page-Id": other, "X-Controller-Token": token}).status_code, 200)
-        self.assertEqual(self.client.get("/media", params={**self.query, "file": self.file}, headers={"Range": "bytes=0-1"}).status_code, 206)
-
-    def test_ownership_survives_arbitrary_time_without_requests(self):
-        for now in [0, 15, 86400, 10**12]:
-            with patch("time.monotonic", return_value=now), patch("time.time", return_value=now):
-                with self.controller.authorized(self.page, self.token):
-                    self.assertEqual(self.controller.page, self.page)
-        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": "later-page-identity-1234"}).status_code, 423)
-        self.assertEqual(self.capture().status_code, 201)
-
-    def test_explicit_release_allows_another_page_to_claim(self):
-        self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 200)
-        self.assertEqual(self.capture().status_code, 409)
-        self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": "another-page-identity"}).status_code, 200)
-        self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 423)
-
-    def test_reentering_editor_invalidates_old_token(self):
-        self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 200)
-        reclaimed = self.client.post("/api/controller/claim", json={"page_id": self.page}).json()["token"]
-        self.assertNotEqual(reclaimed, self.token)
-        self.assertEqual(self.client.post("/api/controller/release", json={"page_id": self.page, "token": self.token}).status_code, 423)
-        self.headers["X-Controller-Token"] = reclaimed
-        self.assertEqual(self.capture().status_code, 201)
-
-    def test_restart_clears_control_and_rejects_previous_token(self):
-        with TestClient(create_app(Settings(self.root), lock_library=False)) as restarted:
-            self.assertEqual(restarted.get("/api/projects", headers=self.headers).status_code, 409)
-            token = restarted.post("/api/controller/claim", json={"page_id": "new-page-after-restart"}).json()["token"]
-            self.assertEqual(restarted.get("/api/projects", headers={"X-Page-Id": "new-page-after-restart", "X-Controller-Token": token}).status_code, 200)
-            self.assertEqual(restarted.post("/api/selections/capture", params=self.query, headers=self.headers,
-                                            json={"id": "stale-restart-capture", "file": self.file, "time": 10}).status_code, 423)
-        self.assertFalse(self.path.exists())
-
-    def test_takeover_waits_for_in_flight_durable_write(self):
-        writing, commit, transferring = threading.Event(), threading.Event(), threading.Event()
-        order = []
-        original_write, original_claim = self.app.state.store._write, self.controller.claim
-        def held_write(*args):
-            writing.set()
-            if not commit.wait(5): raise AssertionError("Test did not allow the write to finish")
-            result = original_write(*args)
-            order.append("write")
-            return result
-        def observed_claim(*args, **kwargs):
-            transferring.set()
-            result = original_claim(*args, **kwargs)
-            order.append("takeover")
-            return result
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            with patch.object(self.app.state.store, "_write", held_write), patch.object(self.controller, "claim", observed_claim):
-                pending_write = pool.submit(self.capture)
-                try:
-                    self.assertTrue(writing.wait(5))
-                    pending_takeover = pool.submit(self.client.post, "/api/controller/takeover", json={"page_id": "concurrent-new-controller"})
-                    self.assertTrue(transferring.wait(5))
-                    self.assertFalse(pending_takeover.done(), "Takeover must wait for the durable mutation")
-                finally:
-                    commit.set()
-                self.assertEqual(pending_write.result(timeout=5).status_code, 201)
-                takeover = pending_takeover.result(timeout=5)
-                self.assertEqual(takeover.status_code, 200)
-        self.assertEqual(order, ["write", "takeover"])
-        self.assertEqual(self.capture(identity="stale-after-transfer").status_code, 423)
-        response = self.client.post("/api/selections/capture", params=self.query,
-                                    headers={"X-Page-Id": "concurrent-new-controller", "X-Controller-Token": takeover.json()["token"]},
-                                    json={"id": "new-controller-capture", "file": self.file, "time": 80})
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(len(json.loads(self.path.read_text())["selections"]), 2)
-
-    def test_queued_stale_write_cannot_commit_after_completed_takeover(self):
-        waiting = threading.Event()
-        original_access = self.controller.authorized
-        def observed_access(page, token):
-            waiting.set()
-            return original_access(page, token)
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            with patch.object(self.controller, "authorized", observed_access):
-                with self.controller.lock:
-                    pending = pool.submit(self.capture)
-                    self.assertTrue(waiting.wait(5))
-                    self.controller.claim("controller-before-queued-save", takeover=True)
-                self.assertEqual(pending.result(timeout=5).status_code, 423)
-        self.assertFalse(self.path.exists())
-
     def test_foreign_origin_is_rejected_and_input_errors_are_json(self):
         self.assertEqual(self.client.post("/api/controller/claim", json={"page_id": self.page}, headers={"Origin": "https://other.example"}).status_code, 403)
         response = self.client.post("/api/controller/claim", json={"page_id": 123})
         self.assertEqual(response.status_code, 422)
         self.assertIn("error", response.json())
         self.assertEqual(self.client.get("/assets/not-an-asset").status_code, 404)
-
-    def test_concurrent_server_mutations_keep_every_selection(self):
-        store = self.app.state.store
-        def add(index):
-            return store.add(self.project, {"id": f"parallel-identity-{index:016}", "file": self.file, "start": index, "end": index + 1})
-        with ThreadPoolExecutor(max_workers=4) as pool:
-            list(pool.map(add, range(12)))
-        records = json.loads(self.path.read_text())["selections"]
-        self.assertEqual(len(records), 12)
-        self.assertEqual(len({record["id"] for record in records}), 12)
-
 
 class InfrastructureTests(unittest.TestCase):
     def test_case_insensitive_sort_has_deterministic_tie_breaker(self):
@@ -493,3 +507,30 @@ class InfrastructureTests(unittest.TestCase):
             env.write_text(f"WORKING_DIR={Path(__file__).resolve().parents[1]}", encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
                 with self.assertRaises(ValueError): load_settings(env)
+
+
+class SourceNameTests(unittest.TestCase):
+    def test_numeric_episode_aliases(self):
+        for alias in ["Episode 7", "Episode 07", "EP 7", "ep07", "Episode 007", " Episode   07 "]:
+            self.assertEqual(source_key(alias), source_key("Episode 07"))
+
+    def test_casefold_whitespace_and_display_spelling(self):
+        self.assertEqual(source_key("  My   MOVIE "), source_key("my movie"))
+        self.assertEqual(source_name("  Episode   07 "), "Episode   07")
+        self.assertEqual(source_key("Straße"), source_key("STRASSE"))
+
+    def test_custom_names_are_not_numeric_episodes(self):
+        for name in ["OVA 1", "Season 2 - Episode 1", "Episode 1A", "Part 1", "Movie", "Season/Episode", "__proto__"]:
+            self.assertNotEqual(source_key(name), source_key("Episode 01"))
+        self.assertNotEqual(source_key("OVA 01"), source_key("OVA 1"))
+
+    def test_suggestions_and_next_episode(self):
+        self.assertEqual(next_episode([]), "Episode 01")
+        self.assertEqual(next_episode(["EP7", "OVA 1", "Episode 02"]), "Episode 08")
+        self.assertEqual(following_episode("Episode 02", ["Episode 02", "Episode 10"]), "Episode 03")
+        self.assertEqual(following_episode("Movie", ["Movie", "Episode 10"]), "Episode 11")
+
+    def test_names_are_bounded_and_serializable(self):
+        for name in [None,"", "  ", "a"*101, "bad\nname", "bad\ud800"]:
+            with self.assertRaises(AppError):source_name(name)
+        self.assertEqual(source_name("日本語 \"Movie\""), "日本語 \"Movie\"")

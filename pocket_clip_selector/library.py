@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import stat
+import re
 
 from .errors import AppError
 
@@ -14,6 +15,7 @@ def sort_key(name):
 def validate_name(name):
     if (not isinstance(name, str) or not name or name in (".", "..")
             or any(char in name for char in ("/", "\\", ":", "\0"))
+            or any(0xD800 <= ord(char) <= 0xDFFF for char in name)
             or name.endswith((".", " "))):
         raise AppError("Use an exact top-level project or MP4 filename.", 400, "unsafe_path")
     return name
@@ -59,6 +61,23 @@ class Library:
 
     def project(self, name):
         return self.child(self.root, name, directory=True)
+
+    def create_project(self, name):
+        name = name.strip()
+        validate_name(name)
+        if (len(name) > 100 or len(name.encode("utf-8")) > 200
+                or any(ord(char) < 32 or 127 <= ord(char) < 160 or char in '<>"|?*' for char in name)
+                or re.fullmatch(r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\..*)?", name, re.I)):
+            raise AppError("Choose a short folder name without Windows reserved names or characters.", 422, "invalid_project_name")
+        self.check_root()
+        if any(path.name.casefold() == name.casefold() for path in self.root.iterdir()):
+            raise AppError("This project folder already exists. Open it from Projects.", 409, "project_exists")
+        target = self.child(self.root, name, directory=True, missing=True)
+        try:
+            target.mkdir()
+        except FileExistsError:
+            raise AppError("This project folder already exists. Open it from Projects.", 409, "project_exists") from None
+        return self.project(name).name
 
     def media(self, project, file):
         validate_name(file)
@@ -106,8 +125,8 @@ class Library:
             meta.mkdir(exist_ok=True)
         if meta.exists():
             meta = self.child(folder, ".clipselector", directory=True)
-            return self.child(meta, "selections.json", missing=True)
-        return meta / "selections.json"
+            return self.child(meta, "project.json", missing=True)
+        return meta / "project.json"
 
     def open_media(self, project, file):
         target = self.media(project, file)

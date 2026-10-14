@@ -13,11 +13,11 @@ from .errors import AppError
 from .controller import ControllerOwnership
 from .library import Library
 from .process_lock import ProcessLock
-from .storage import SelectionStore
+from .storage import ProjectStore, CATEGORIES, STATUSES, MAX_SECONDS
 from .streaming import media_response
 
 STATIC = Path(__file__).parent / "static"
-Seconds = Annotated[StrictFloat, Field(ge=0, allow_inf_nan=False)]
+Seconds = Annotated[StrictFloat, Field(ge=0, le=MAX_SECONDS, allow_inf_nan=False)]
 Identity = Annotated[StrictStr, Field(pattern=r"^[A-Za-z0-9_-]{16,128}$")]
 
 
@@ -33,26 +33,42 @@ class Owner(Page):
     token: StrictStr
 
 
-class Bounds(Body):
-    start: Seconds
-    end: Seconds
+class NewProject(Body):
+    name: StrictStr
+    category: StrictStr
 
 
-class NewSelection(Bounds):
+class Category(Body):
+    category: StrictStr
+
+
+class Status(Body):
+    status: StrictStr
+
+
+class Source(Body):
+    name: StrictStr
+    media_file: StrictStr | None = None
+
+
+class SourceChange(Body):
+    name: StrictStr | None = None
+    media_file: StrictStr | None = None
+
+
+class Bookmark(Body):
     id: Identity
-    file: StrictStr
+    time: Seconds
 
 
-class Capture(Body):
-    id: Identity
-    file: StrictStr
+class BookmarkTime(Body):
     time: Seconds
 
 
 def create_app(settings: Settings | None = None, *, controller=None, lock_library=True):
     settings = settings or load_settings()
     library = Library(settings.working_dir)
-    store = SelectionStore(library)
+    store = ProjectStore(library)
     controller = controller or ControllerOwnership()
     process_lock = ProcessLock(settings.working_dir)
 
@@ -70,7 +86,7 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
     app.state.controller = controller
 
     def error_response(error):
-        return JSONResponse({"error": {"code": error.code, "message": str(error)}}, status_code=error.status)
+        return JSONResponse({"error": {"code": error.code, "message": str(error), **error.details}}, status_code=error.status)
 
     @app.exception_handler(AppError)
     async def app_error(request, error):
@@ -83,7 +99,7 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
-        return error_response(AppError("Invalid request. Times must be finite numbers and filenames must be exact.", 422, "invalid_request"))
+        return error_response(AppError("Invalid request. Bookmark times must be finite nonnegative numbers; names and categories must be text.", 422, "invalid_request"))
 
     @app.middleware("http")
     async def local_requests(request, call_next):
@@ -108,7 +124,7 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
 
     @app.get("/assets/{name}")
     def asset(name: str):
-        allowed = {"app.js": "text/javascript", "player.js": "text/javascript", "styles.css": "text/css", "icon.svg": "image/svg+xml",
+        allowed = {"app.js": "text/javascript", "player.js": "text/javascript", "bookmarks.js": "text/javascript", "styles.css": "text/css", "icon.svg": "image/svg+xml",
                    "manifest.webmanifest": "application/manifest+json", "apple-touch-icon.png": "image/png"}
         if name not in allowed:
             raise AppError("Asset not found.", 404, "unavailable")
@@ -116,7 +132,7 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
 
     @app.get("/health")
     def health():
-        return {"ok": True, "version": "1.0"}
+        return {"ok": True, "version": "2.0"}
 
     @app.post("/api/controller/claim")
     def claim(body: Page):
@@ -134,42 +150,64 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
     @app.get("/api/projects")
     def projects(request: Request):
         with access(request):
-            return {"projects": library.projects()}
+            return {"projects": store.projects(), "categories": CATEGORIES, "statuses": STATUSES}
+
+    @app.post("/api/projects", status_code=201)
+    def create_project(request: Request, body: NewProject):
+        with access(request):
+            return store.create(body.name, body.category)
 
     @app.get("/api/project")
     def project(request: Request, project: str):
         with access(request):
-            return {"name": library.project(project).name, "media": library.files(project)}
+            return store.list(project)
+
+    @app.post("/api/project/initialize")
+    def initialize(request: Request, project: str, body: Category):
+        with access(request):
+            return store.initialize(project, body.category, request.headers.get("if-match"))
+
+    @app.patch("/api/project")
+    def change_status(request: Request, project: str, body: Status):
+        with access(request):
+            return store.status(project, body.status, request.headers.get("if-match"))
+
+    @app.post("/api/sources", status_code=201)
+    def add_source(request: Request, project: str, body: Source):
+        with access(request):
+            return store.add_source(project, body.name, body.media_file, request.headers.get("if-match"))
+
+    @app.patch("/api/source")
+    def change_source(request: Request, project: str, source: str, body: SourceChange):
+        with access(request):
+            if not body.model_fields_set:
+                raise AppError("Choose a new source name or local MP4.", 422, "invalid_request")
+            return store.change_source(project, source, body.model_dump(exclude_unset=True), request.headers.get("if-match"))
+
+    @app.delete("/api/source")
+    def delete_source(request: Request, project: str, source: str):
+        with access(request):
+            return store.delete_source(project, source, request.headers.get("if-match"))
+
+    @app.post("/api/bookmarks", status_code=201)
+    def add_bookmark(request: Request, project: str, source: str, body: Bookmark):
+        with access(request):
+            return store.add_bookmark(project, source, body.model_dump())
+
+    @app.patch("/api/bookmarks/{identity}")
+    def edit_bookmark(request: Request, identity: str, project: str, source: str, body: BookmarkTime):
+        with access(request):
+            return store.change_bookmark(project, source, identity, request.headers.get("if-match"), body.time)
+
+    @app.delete("/api/bookmarks/{identity}")
+    def delete_bookmark(request: Request, identity: str, project: str, source: str):
+        with access(request):
+            return store.change_bookmark(project, source, identity, request.headers.get("if-match"))
 
     @app.get("/api/media-info")
     def media_info(request: Request, project: str, file: str):
         with access(request):
             return {"duration": store.media_duration(project, file)}
-
-    @app.get("/api/selections")
-    def selections(request: Request, project: str):
-        with access(request):
-            return store.list(project)
-
-    @app.post("/api/selections", status_code=201)
-    def add_selection(request: Request, project: str, body: NewSelection):
-        with access(request):
-            return store.add(project, body.model_dump())
-
-    @app.post("/api/selections/capture", status_code=201)
-    def capture(request: Request, project: str, body: Capture):
-        with access(request):
-            return store.capture(project, body.file, body.time, body.id)
-
-    @app.patch("/api/selections/{identity}")
-    def edit_selection(request: Request, identity: str, project: str, body: Bounds):
-        with access(request):
-            return store.change(project, identity, request.headers.get("if-match"), body.model_dump())
-
-    @app.delete("/api/selections/{identity}")
-    def delete_selection(request: Request, identity: str, project: str):
-        with access(request):
-            return store.change(project, identity, request.headers.get("if-match"))
 
     @app.api_route("/media", methods=["GET", "HEAD"])
     def media(request: Request, project: str, file: str):

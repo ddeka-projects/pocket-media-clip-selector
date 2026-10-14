@@ -33,19 +33,46 @@
 
     <div id="workspace" hidden>
       <div class="context-bar">
-        <button id="back" class="text-button" hidden>‹ Library</button>
+        <button id="back" class="text-button" hidden>‹ Projects</button>
         <div class="context-actions"><p id="project-context" class="context-label">ON YOUR PC</p><button id="exit-editor" class="text-button" hidden>Exit Editor</button></div>
       </div>
-
       <aside id="control-notice" class="control-notice" role="alert" hidden>
-        <div><strong id="control-message">Editor control was transferred to another page</strong><p>Take Control to edit here again. Playback can continue.</p></div>
+        <div><strong id="control-message">Editor control was transferred to another page</strong><p>Take Control to save here again. Your entry stays on this page.</p></div>
         <button id="take-control" class="primary">Take Control</button>
       </aside>
 
-      <section id="library-view" aria-labelledby="library-title">
-        <div class="section-heading"><div><p class="eyebrow" id="library-kicker">FIND YOUR NEXT SCENE</p><h1 id="library-title">Your projects</h1></div><button id="refresh" class="secondary compact">Refresh</button></div>
-        <p class="subtle" id="library-detail">Choose a project to start watching.</p>
-        <div id="library-list" class="card-list"></div>
+      <section id="projects-view" aria-labelledby="projects-title">
+        <div class="section-heading"><div><p class="eyebrow">DISCOVER NOW · EDIT LATER</p><h1 id="projects-title">Your projects</h1></div><button id="new-project" class="primary compact">＋ Project</button></div>
+        <div class="overview-actions"><p class="subtle">Keep moments from any player, even before you download the footage.</p><button id="refresh-projects" class="text-button">Refresh</button></div>
+        <button id="resume-quick" class="primary resume-button" hidden>Quick Log</button>
+        <div id="project-list" class="card-list"></div>
+      </section>
+
+      <section id="sources-view" hidden aria-labelledby="sources-title">
+        <div class="section-heading"><div><p class="eyebrow" id="project-category"></p><h1 id="sources-title"></h1></div><button id="new-source" class="primary compact">＋ Source</button></div>
+        <div class="overview-actions"><label class="status-control" for="project-status">Status <select id="project-status"><option>Discovering</option><option>Editing</option></select></label><button id="refresh-sources" class="text-button">Refresh</button></div>
+        <form id="initialize-form" class="setup-card" hidden><h2>Choose a category</h2><p class="subtle">Set up bookmarks for this folder. Your media stays where it is.</p><label for="initialize-category">Project category</label><select id="initialize-category" required></select><button id="initialize-save" class="primary" type="submit">Set up project</button><p id="initialize-error" class="form-error" role="alert" hidden></p></form>
+        <div id="source-list" class="source-list"></div>
+        <section id="local-media" class="local-media" hidden aria-labelledby="local-media-title"><h2 id="local-media-title">Local MP4s</h2><p class="subtle">Link a video to a source, then watch and bookmark.</p><div id="local-media-list" class="card-list"></div></section>
+      </section>
+
+      <section id="quick-view" hidden aria-labelledby="quick-title">
+        <div class="section-heading"><div><p class="eyebrow">FROM VLC · OR ANY PLAYER</p><h1 id="quick-title">Quick Log</h1></div><button id="quick-add-source" class="text-button">＋ Source</button></div>
+        <div class="quick-pickers"><label for="quick-project">Project<select id="quick-project"></select></label><label for="quick-source">Source<select id="quick-source"></select></label></div>
+        <div class="overview-actions"><span class="subtle" id="quick-count"></span><button id="next-episode" class="secondary compact">Next Episode →</button></div>
+        <form id="quick-form" class="quick-form">
+          <label for="quick-time">Time in the video</label>
+          <input id="quick-time" type="text" inputmode="numeric" enterkeyhint="done" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="16" placeholder="1742" aria-describedby="quick-preview quick-message">
+          <p id="quick-preview" class="time-preview">1742 → 17:42 · colons work too</p>
+          <button id="quick-save" class="primary" type="submit">Save Bookmark</button>
+          <p id="quick-message" class="form-message" role="status" hidden></p>
+        </form>
+      </section>
+
+      <section id="bookmarks-view" hidden aria-labelledby="bookmarks-title">
+        <div class="section-heading"><div><p class="eyebrow">SAVED ON YOUR PC</p><h1 id="bookmarks-title"></h1></div><button id="refresh-bookmarks" class="secondary compact">Refresh</button></div>
+        <p id="bookmarks-detail" class="subtle"></p>
+        <div id="bookmark-list" class="bookmark-list"></div>
       </section>
 
       <section id="player-view" hidden aria-labelledby="media-title">
@@ -53,67 +80,33 @@
         <div class="watch-panel">
           <div class="video-wrap"><video id="video" playsinline controls preload="metadata" aria-label="Selected video"></video></div>
           <p id="video-error" class="error-message" role="alert" hidden></p>
-          <p id="replay-note" class="replay-note" hidden></p>
           <div class="transport">
-            <div class="time-row">
-              <div class="playback-buttons">
-                <button id="play" class="secondary play-button" disabled>Play</button>
-                <button data-skip="-5" aria-label="Skip back five seconds" disabled>−5 s</button>
-                <button data-skip="5" aria-label="Skip forward five seconds" disabled>+5 s</button>
-                <button data-rate="1" aria-label="Normal speed" aria-pressed="true" disabled>1×</button>
-              </div>
-              <span id="actual-speed" class="subtle" hidden></span>
-              <span class="playback-time"><span id="current-time">0:00.000</span><span class="subtle"> / <span id="duration">—</span></span></span>
-            </div>
-            <label class="sr-only" for="scrubber">Seek through video</label>
-            <input id="scrubber" type="range" min="0" max="1" step="0.01" value="0" disabled>
+            <div class="time-row"><div class="playback-buttons">
+              <button id="play" class="secondary play-button" disabled>Play</button><button data-skip="-5" aria-label="Skip back five seconds" disabled>−5 s</button><button data-skip="5" aria-label="Skip forward five seconds" disabled>+5 s</button><button data-rate="1" aria-label="Normal speed" aria-pressed="true" disabled>1×</button>
+            </div><span id="actual-speed" class="subtle" hidden></span><span class="playback-time"><span id="current-time">0:00.000</span><span class="subtle"> / <span id="duration">—</span></span></span></div>
+            <label class="sr-only" for="scrubber">Seek through video</label><input id="scrubber" type="range" min="0" max="1" step="0.01" value="0" disabled>
             <p class="subtle speed-notice" id="speed-notice" role="status" hidden></p>
           </div>
         </div>
         <div class="editing-panel">
-          <div class="speed-row" role="group" aria-label="Playback speed">
-            <span class="speed-label" aria-hidden="true">Speed</span>
-            <button data-rate="0.25" aria-label="Quarter speed" aria-pressed="false" disabled>0.25×</button>
-            <button data-rate="0.5" aria-label="Half speed" aria-pressed="false" disabled>0.5×</button>
-            <button data-rate="2" aria-label="Double speed" aria-pressed="false" disabled>2×</button>
-            <button data-rate="3" aria-label="Triple speed" aria-pressed="false" disabled>3×</button>
-          </div>
-          <div class="selection-tools">
-            <div class="capture-area"><button id="capture" class="primary capture" aria-describedby="capture-hint" disabled><span aria-hidden="true">＋</span> Capture Moment</button><p id="capture-hint" class="capture-hint">±15 sec · saves while playing</p></div>
-            <div class="manual-range">
-              <div class="manual-controls">
-                <div class="marks"><button id="mark-in" class="secondary" disabled>Mark IN<span id="in-value">—</span></button><button id="mark-out" class="secondary" disabled>Mark OUT<span id="out-value">—</span></button></div>
-                <div class="range-actions"><button id="save-range" class="secondary" disabled>Save Range</button><button id="reset-range" class="text-button" disabled>Reset</button></div>
-              </div>
-              <p id="range-detail" class="subtle">Mark the beginning and end while watching.</p>
-            </div>
-          </div>
+          <div class="speed-row" role="group" aria-label="Playback speed"><span class="speed-label" aria-hidden="true">Speed</span><button data-rate="0.25" aria-label="Quarter speed" aria-pressed="false" disabled>0.25×</button><button data-rate="0.5" aria-label="Half speed" aria-pressed="false" disabled>0.5×</button><button data-rate="2" aria-label="Double speed" aria-pressed="false" disabled>2×</button><button data-rate="3" aria-label="Triple speed" aria-pressed="false" disabled>3×</button></div>
+          <div class="bookmark-tools"><button id="bookmark" class="primary bookmark-button" disabled>＋ Bookmark</button><button id="watch-quick" class="secondary">Quick Log</button></div>
+          <div id="watch-save-error" class="watch-save-error" role="alert" hidden><p id="watch-save-message"></p><div class="retry-actions"><button id="watch-retry" class="secondary">Retry</button><button id="watch-dismiss" class="text-button">Dismiss</button></div></div>
         </div>
-      </section>
-
-      <section id="selections-view" hidden aria-labelledby="selections-title">
-        <div class="section-heading"><div><p class="eyebrow">READY FOR ANOTHER LOOK</p><h1 id="selections-title">Saved selections</h1></div><button id="refresh-selections" class="secondary compact">Refresh</button></div>
-        <p class="subtle" id="selections-detail">Saved on your PC. Tap a range to replay it.</p>
-        <div id="selections-list" class="selection-list"></div>
       </section>
 
       <div class="project-navigation">
         <nav id="media-navigation" class="media-navigation" aria-label="Video navigation" hidden><button id="previous" class="secondary" aria-label="Previous video" title="Previous video"><span aria-hidden="true">‹</span><span class="nav-label"> Previous video</span></button><button id="next" class="secondary" aria-label="Next video" title="Next video"><span class="nav-label">Next video </span><span aria-hidden="true">›</span></button></nav>
-        <nav class="view-tabs" id="tabs" aria-label="Project views" hidden><button id="player-tab">▶ Player</button><button id="selections-tab"><span class="selections-icon" aria-hidden="true">◫ </span>Selections <span id="selection-count">0</span></button></nav>
+        <nav id="tabs" class="view-tabs" aria-label="Source views" hidden><button id="quick-tab">Quick Log</button><button id="bookmarks-tab">Bookmarks <span id="bookmark-count">0</span></button><button id="watch-tab">▶ Watch</button></nav>
       </div>
     </div>
   </main>
 
-  <dialog id="edit-dialog" aria-labelledby="edit-title">
-    <form id="edit-form">
-      <p class="eyebrow">REFINE YOUR SELECTION</p><h2 id="edit-title">Adjust range</h2><p class="subtle" id="edit-file"></p>
-      <label for="edit-start">Start · seconds</label><div class="nudge-field"><button type="button" data-nudge="start:-0.5" aria-label="Start half a second earlier">−0.5</button><input id="edit-start" type="number" min="0" step="any" inputmode="decimal" required><button type="button" data-nudge="start:0.5" aria-label="Start half a second later">+0.5</button></div>
-      <label for="edit-end">End · seconds</label><div class="nudge-field"><button type="button" data-nudge="end:-0.5" aria-label="End half a second earlier">−0.5</button><input id="edit-end" type="number" min="0" step="any" inputmode="decimal" required><button type="button" data-nudge="end:0.5" aria-label="End half a second later">+0.5</button></div>
-      <p class="subtle" id="edit-preview"></p><p id="edit-error" class="error-message" role="alert" hidden></p>
-      <div class="dialog-actions"><button type="button" id="edit-cancel" class="secondary">Cancel</button><button id="edit-save" class="primary">Save changes</button></div>
-    </form>
-  </dialog>
-  <dialog id="delete-dialog" aria-labelledby="delete-title"><form id="delete-form"><h2 id="delete-title">Delete this selection?</h2><p class="subtle" id="delete-detail"></p><p class="subtle">This removes the saved range from your PC.</p><p id="delete-error" class="error-message" role="alert" hidden></p><div class="dialog-actions"><button type="button" id="delete-cancel" class="secondary">Keep selection</button><button id="delete-confirm" class="danger">Delete</button></div></form></dialog>
+  <dialog id="project-dialog" aria-labelledby="project-dialog-title"><form id="project-form"><p class="eyebrow">A PLACE FOR YOUR MOMENTS</p><h2 id="project-dialog-title">New project</h2><label for="project-name">Project folder name</label><input id="project-name" type="text" maxlength="100" autocomplete="off" required><label for="project-new-category">Category</label><select id="project-new-category" required></select><p id="project-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button id="project-cancel" type="button" class="secondary">Cancel</button><button id="project-save" class="primary" type="submit">Create project</button></div></form></dialog>
+  <dialog id="source-dialog" aria-labelledby="source-dialog-title"><form id="source-form"><h2 id="source-dialog-title">New source</h2><label for="source-name">Source name</label><input id="source-name" type="text" maxlength="100" autocomplete="off" required><label for="source-media">Local MP4 · optional</label><select id="source-media"></select><p class="subtle">Bookmarks stay with this source when its name or video changes.</p><p id="source-error" class="form-error" role="alert" hidden></p><button id="source-existing" type="button" class="text-button" hidden>Open existing source</button><button id="source-remove" type="button" class="text-button delete-button" hidden>Remove source…</button><div class="dialog-actions"><button id="source-cancel" type="button" class="secondary">Cancel</button><button id="source-save" class="primary" type="submit">Save source</button></div></form></dialog>
+  <dialog id="link-dialog" aria-labelledby="link-title"><form id="link-form"><h2 id="link-title">Link &amp; watch</h2><p id="link-file" class="subtle"></p><label for="link-source">Source</label><select id="link-source"></select><label id="link-name-label" for="link-name">New source name</label><input id="link-name" type="text" maxlength="100" autocomplete="off"><p id="link-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button id="link-cancel" type="button" class="secondary">Cancel</button><button id="link-save" class="primary" type="submit">Link &amp; Watch</button></div></form></dialog>
+  <dialog id="edit-dialog" aria-labelledby="edit-title"><form id="edit-form"><h2 id="edit-title">Edit bookmark</h2><p id="edit-source" class="subtle"></p><label for="edit-time">Time · type digits or paste a time</label><input id="edit-time" type="text" inputmode="numeric" enterkeyhint="done" maxlength="16" autocomplete="off" required><p id="edit-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button id="edit-cancel" type="button" class="secondary">Cancel</button><button id="edit-save" class="primary" type="submit">Save time</button></div></form></dialog>
+  <dialog id="confirm-dialog" aria-labelledby="confirm-title"><form id="confirm-form"><h2 id="confirm-title"></h2><p id="confirm-detail" class="subtle"></p><p id="confirm-error" class="form-error" role="alert" hidden></p><div class="dialog-actions"><button id="confirm-cancel" type="button" class="secondary">Cancel</button><button id="confirm-save" class="danger" type="submit">Delete</button></div></form></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
   <noscript><p class="error-message">Enable JavaScript in Safari to use Clip Selector.</p></noscript>
 </body>

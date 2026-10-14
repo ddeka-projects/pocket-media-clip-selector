@@ -1,252 +1,97 @@
-function assert(condition, message) { if (!condition) throw new Error(message); }
-function equal(actual, expected, message) { assert(actual === expected, `${message}: ${actual} !== ${expected}`); }
-function setup() {
-  Object.assign(state, { project: "A show – 日本語", file: "[Any name] # café.mp4", files: [{ name: "[Any name] # café.mp4" }],
-    owned: true, ready: true, token: "live-token", in: null, out: null, saving: false, stopAt: null,
-    view: "player", controlBusy: false, dialogBusy: false, selections: [], revision: "initial" });
-  Object.assign(fakeVideo, { paused: false, pauseCalls: 0, currentTime: 50.125, duration: 120.5, playbackRate: 1 });
-  element("workspace").hidden = false; element("gate").hidden = true; element("control-notice").hidden = true; element("toast").hidden = true;
-  showView("player"); updateControls();
+async function checks(){
+ setup("quick");
+ remember();const saved=JSON.parse(stored.get(preferenceKey));
+ equal(saved.project,state.project,"last project is remembered");equal(saved.source,state.source,"last source is remembered");
+ equal(Object.keys(saved).sort().join(","),"project,source","controller credentials are never persisted");
+ equal(readPreference().source,state.source,"preference survives a page launch");
+ stored.set(preferenceKey,"invalid json");equal(readPreference(),null,"damaged preference does not block startup");
+ remember();
+ const draftCount=state.drafts.size; let lifecycleCalls=0;transport=async()=>{lifecycleCalls++;throw new Error("should not request");};
+ document.hidden=true;document.dispatchEvent({type:"visibilitychange"});
+ for(const type of ["pagehide","offline","online","pageshow"])window.dispatchEvent({type});
+ equal(lifecycleCalls,0,"lifecycle events do not send ownership requests");equal(state.owned,true,"ownership persists");
+ equal(state.drafts.size,draftCount,"lifecycle does not clear or mutate a draft");
+
+ setup("quick");state.meta=snapshot([],"Episode 01",null);render();input("1742");
+ let calls=0,body,finish;transport=async(path,options)=>{calls++;body=JSON.parse(options.body);equal(path.startsWith("/api/bookmarks?"),true,"single bookmark endpoint");equal(body.time,1062,"Quick Log parses compact digits");equal(Object.keys(body).sort().join(","),"id,time","no range is sent");return await new Promise(resolve=>{finish=()=>resolve(reply(snapshot([{id:body.id,time:body.time}],"Episode 01",null)));});};
+ const pending=saveQuick(submit);await saveQuick(submit);equal(calls,1,"double submit never sends a second write");
+ equal(element("quick-time").value,"1742","input stays until confirmed");equal(state.busy,true,"save is pending");
+ finish();await pending;
+ equal(element("quick-time").value,"","confirmed save clears entry");equal(state.source,"Episode 01","save keeps same source");
+ assert(element("quick-time").focusCalls>0,"confirmed save returns focus");equal(currentSource().bookmarks[0].time,1062,"bookmark installed without media");
+
+ input("1768");calls=0;transport=async()=>{calls++;return reply({});};await saveQuick(submit);
+ equal(calls,0,"invalid seconds are not sent");equal(element("quick-time").value,"1768","invalid input remains visible");assert(element("quick-message").textContent.includes("Seconds"),"invalid seconds explained");
+
+ input("11432");let attemptedId;transport=async(path,options)=>{attemptedId=JSON.parse(options.body).id;throw new Error("offline");};
+ await saveQuick(submit);equal(element("quick-time").value,"11432","network failure keeps entry");equal(state.owned,true,"network failure keeps authority");
+ assert(element("quick-message").textContent.includes("Cannot confirm"),"uncertain save is honest");
+ transport=async(path,options)=>{const retry=JSON.parse(options.body);equal(retry.id,attemptedId,"explicit retry reuses identity");return reply(snapshot([{id:retry.id,time:retry.time}],"Episode 01",null));};
+ await saveQuick(submit);equal(currentSource().bookmarks.length,1,"retry confirmed once");equal(element("quick-time").value,"","retry clears only after acknowledgement");
+
+ input("332");transport=async(path,options)=>{const captured=JSON.parse(options.body);input("1742");return reply(snapshot([{id:captured.id,time:captured.time}],"Episode 01",null));};
+ await saveQuick(submit);equal(element("quick-time").value,"1742","typing next entry during a save is preserved");
+
+ setup();
+ for(const rate of fakeRates){rate.listeners.click[0]();equal(fakeVideo.playbackRate,Number(rate.dataset.rate),"speed changes");equal(rate.getAttribute("aria-pressed"),"true","accepted rate selected");equal(element("speed-notice").hidden,true,"no routine speed warning");}
+ equal(fakeVideo.pauseCalls,0,"speed changes do not pause");
+ fakeVideo.playbackRate=1.5;syncRate();equal(element("actual-speed").textContent,"1.5× actual","native rate is truthful");
+ Object.defineProperty(fakeVideo,"playbackRate",{configurable:true,get(){return 1;},set(){throw new Error("unsupported");}});
+ fakeRates[4].listeners.click[0]();equal(fakeRates[2].getAttribute("aria-pressed"),"true","rejected rate keeps real selected speed");equal(element("speed-notice").hidden,false,"real assignment failure is explained");
+ Object.defineProperty(fakeVideo,"playbackRate",{configurable:true,writable:true,value:1});
+ fakeSkips[0].listeners.click[0]();equal(fakeVideo.currentTime,45.125,"minus five keeps precision");fakeSkips[1].listeners.click[0]();equal(fakeVideo.currentTime,50.125,"plus five keeps precision");
+ let capturedTime;transport=async(path,options)=>{const row=JSON.parse(options.body);capturedTime=row.time;fakeVideo.currentTime=72;return reply(snapshot([row]));};
+ await saveWatch();equal(capturedTime,50.125,"watch samples at tap before network work");equal(currentSource().bookmarks[0].time,50.125,"fractional timestamp is retained");equal(fakeVideo.pauseCalls,0,"bookmark does not pause");
+ openWatch(45.125);equal(fakeVideo.currentTime,45.125,"bookmark jumps to marked moment");fakeVideo.currentTime=100;updateTime();equal(fakeVideo.paused,false,"no automatic range stop remains");
+ transport=async()=>{throw new Error("offline");};await saveWatch();const watchId=state.watchPending.id;
+ equal(state.watchPending.time,100,"unconfirmed watch moment retained");equal(fakeVideo.paused,false,"failed bookmark keeps playing");assert(element("watch-save-message").textContent.includes("1:40"),"failed watch time visible");
+ fakeVideo.currentTime=110;transport=async(path,options)=>{const row=JSON.parse(options.body);equal(row.id,watchId,"watch retry is idempotent");equal(row.time,100,"watch retry saves original moment");return reply(snapshot([row]));};
+ await saveWatch(true);equal(state.watchPending,null,"confirmed watch retry clears pending");
+
+ setup("bookmarks");const original={id:"fractional-bookmark-id",time:50.875};state.meta=snapshot([original],"Episode 01",null);render();editBookmark(original);
+ equal(element("edit-time").value,"050","edit uses friendly compact time");
+ transport=async(path,options)=>{equal(JSON.parse(options.body).time,50.875,"unchanged edit preserves local fractional precision");return reply(snapshot([original],"Episode 01",null));};
+ await element("edit-form").listeners.submit[0](submit); // Handler dispatches an async mutation.
+ while(state.busy)await Promise.resolve();equal(element("edit-dialog").open,false,"edit works without a local MP4");
+
+ setup("quick");input("1742");openSourceDialog(currentSource());element("source-name").value="Movie";
+ transport=async(path,options)=>{const changed=JSON.parse(options.body);equal(changed.name,"Movie","rename sends visible name");equal(changed.media_file,"scene.mp4","rename preserves association");return reply(snapshot([],"Movie"));};
+ element("source-form").listeners.submit[0](submit);while(state.busy)await Promise.resolve();
+ equal(state.source,"Movie","renamed source selected");equal(element("quick-time").value,"1742","rename carries unfinished draft");
+ equal(draftFor(state.project,"Episode 01").raw,"","reusing an old source name does not inherit the renamed draft");
+ openSourceDialog(currentSource());element("source-name").value="Other spelling";
+ transport=async()=>{throw new Error("offline");};element("source-form").listeners.submit[0](submit);while(state.busy)await Promise.resolve();
+ equal(element("source-dialog").open,true,"failed source write keeps dialog");equal(element("source-name").value,"Other spelling","failed source write keeps entry");element("source-dialog").close();
+ remember();confirmDelete("source");
+ transport=async()=>{const result=snapshot();result.sources=[];result.source_count=0;return reply(result);};
+ element("confirm-form").listeners.submit[0](submit);while(state.busy)await Promise.resolve();
+ equal(state.remembered,null,"removed source is not offered as a remembered shortcut");equal(state.view,"sources","removed source returns to Sources");
+
+ setup("quick");input("1742");transport=async()=>reply({error:{code:"controller_transferred",message:"Editor control was transferred to another page"}},false);
+ await saveQuick(submit);equal(state.owned,false,"stale save loses write authority");equal(element("quick-time").value,"1742","takeover rejection preserves entry");equal(element("quick-save").disabled,true,"stale editor cannot save");equal(element("control-notice").hidden,false,"explicit takeover is offered");
+ const oldPage=state.page;transport=async(path,options)=>{
+  if(path==="/api/controller/takeover"){equal(JSON.parse(options.body).page_id,oldPage,"takeover preserves page identity");return reply({token:"new-token"});}
+  if(path==="/api/projects")return reply({projects:[{name:state.project}],categories:["Anime"]});
+  return reply(snapshot([],"Episode 01",null));
+ };
+ await acquireControl(true);equal(state.owned,true,"explicit takeover acquires");equal(state.token,"new-token","new token kept in memory");equal(element("quick-time").value,"1742","explicit takeover retains unsaved draft");
+
+ setup();const position=fakeVideo.currentTime;
+ transport=async()=>{throw new Error("offline");};await exitEditor();equal(state.owned,true,"unconfirmed exit keeps state");equal(fakeVideo.paused,false,"unconfirmed exit does not pause");
+ transport=async(path,options)=>{equal(path,"/api/controller/release","exit explicitly releases");equal(JSON.parse(options.body).token,state.token,"release uses opaque token");return reply({released:true});};
+ await exitEditor();equal(state.owned,false,"confirmed exit releases");equal(fakeVideo.paused,true,"confirmed exit pauses");equal(element("gate-title").textContent,"Editor exited","entry gate visible");
+ transport=async path=>path==="/api/controller/claim"?reply({token:"reentered-token"}):path==="/api/projects"?reply({projects:[{name:state.project}],categories:["Anime"]}):reply(snapshot());
+ await acquireControl();equal(fakeVideo.currentTime,position,"reentry retains playback position");equal(state.view,"player","reentry keeps watch view");
+
+ setup("projects");state.project=state.source=state.meta=null;state.owned=false;state.remembered={project:"A show – 日本語",source:"Episode 01"};
+ transport=async path=>path==="/api/controller/claim"?reply({token:"launch-token"}):path==="/api/projects"?reply({projects:[{name:"A show – 日本語"}],categories:["Anime"]}):reply(snapshot([],"Episode 01",null));
+ await acquireControl();equal(state.view,"quick","new launch restores Quick Log");equal(state.source,"Episode 01","new launch restores source");
+
+ setup();const oldEpoch=state.epoch;let resolveLate;
+ transport=async()=>new Promise(resolve=>{resolveLate=resolve;});const late=request("/api/project");state.epoch++;
+ resolveLate(reply(snapshot()));let suppressed=false;try{await late;}catch(error){suppressed=error.code==="session_changed";}
+ equal(suppressed,true,"late responses from old ownership are ignored");assert(state.epoch>oldEpoch,"ownership epoch advanced");
+ equal(intervalCalls,0,"no background polling added");assert(timerDelays.every(delay=>[12000,2600,8000].includes(delay)),"only request deadlines and toast timers");
+ for(const entry of storageWrites){equal(Object.keys(JSON.parse(entry.value)).sort().join(","),"project,source","storage never contains ownership authority");}
 }
-function reply(payload, ok = true) { return { ok, json: async () => payload }; }
-function libraryReply(path, token = "new-controller-token") {
-  if (path.startsWith("/api/controller/")) return reply({ token });
-  if (path.startsWith("/api/project?")) return reply({ media: state.files });
-  if (path.startsWith("/api/selections?")) return reply({ revision: "fresh", selections: state.selections });
-  if (path === "/api/projects") return reply({ projects: [] });
-  throw new Error(`Unexpected request: ${path}`);
-}
-async function checks() {
-  equal(formatTime(502.25), "8:22.250", "fractional display");
-  equal(formatTime(3599.9996), "1:00:00.000", "rounding carries into hours");
-  equal(formatTime(null), "—", "unmarked time");
-  equal(clampSeek(-2, 100), 0, "seek before start");
-  equal(clampSeek(120, 100), 100, "seek past end");
-  let rejected = { get playbackRate() { return 1; }, set playbackRate(value) { throw new Error("unsupported"); } };
-  equal(acceptedRate(rejected, 3).accepted, false, "rejected rate");
-  let ignored = { get playbackRate() { return 0.5; }, set playbackRate(value) {} };
-  equal(acceptedRate(ignored, 3).rate, 0.5, "show actual rate when ignored");
-  equal(acceptedRate(fakeVideo, 0.25).accepted, true, "accepted quarter speed");
-  assert(newId() !== newId(), "page identities are unique");
-
-  Object.assign(state, { owned: false, token: null, project: null, file: null, view: "library" });
-  element("workspace").hidden = true;
-  const acquisitionPaths = [];
-  transport = async path => { acquisitionPaths.push(path); return libraryReply(path); };
-  await acquireControl();
-  equal(acquisitionPaths.join(","), "/api/controller/claim,/api/projects", "opening automatically claims and loads library");
-  equal(state.owned, true, "first page owns the editor");
-  equal(state.token, "new-controller-token", "claim installs its opaque token");
-  equal(intervalCalls, 0, "acquisition starts no periodic requests");
-
-  state.owned = false; state.token = null; element("workspace").hidden = true;
-  const blockedPaths = [];
-  transport = async path => { blockedPaths.push(path); return reply({ error: { code: "controller_occupied", message: "Clip Selector is open elsewhere" } }, false); };
-  await acquireControl();
-  equal(blockedPaths.join(","), "/api/controller/claim", "occupied page never automatically takes over");
-  equal(element("gate-title").textContent, "Clip Selector is open elsewhere", "second page sees the occupied screen");
-  equal(element("gate-take-control").hidden, false, "second page can explicitly Take Control");
-  const takeoverPaths = [];
-  transport = async path => { takeoverPaths.push(path); return libraryReply(path, "forced-controller-token"); };
-  await element("gate-take-control").listeners.click[0]();
-  equal(takeoverPaths[0], "/api/controller/takeover", "only the Take Control tap forces acquisition");
-  equal(state.token, "forced-controller-token", "explicit takeover installs the new token");
-  state.controlBusy = true;
-  await acquireControl(true);
-  equal(takeoverPaths.length, 2, "busy controller action is ignored without queuing a retry");
-  state.controlBusy = false;
-
-  setup(); state.in = 10.25; state.out = 90.875;
-  let lifecycleCalls = 0;
-  transport = async () => { lifecycleCalls++; throw new Error("unexpected lifecycle request"); };
-  document.hidden = true; document.dispatchEvent({ type: "visibilitychange" });
-  for (const type of ["pagehide", "offline", "online", "pageshow"]) window.dispatchEvent({ type, persisted: true });
-  document.hidden = false; document.dispatchEvent({ type: "visibilitychange" });
-  equal(lifecycleCalls, 0, "visibility, page termination, and network events send no requests");
-  equal(state.owned, true, "ownership survives browser lifecycle events");
-  equal(fakeVideo.pauseCalls, 0, "lifecycle events never pause video");
-  equal(fakeVideo.currentTime, 50.125, "lifecycle events preserve playback position");
-  equal(element("workspace").hidden, false, "lifecycle events keep the player visible");
-  equal(state.in, 10.25, "lifecycle events preserve IN"); equal(state.out, 90.875, "lifecycle events preserve OUT");
-
-  setup();
-  updateControls();
-  for (const button of fakeRates) {
-    button.listeners.click[0]();
-    equal(fakeVideo.playbackRate, Number(button.dataset.rate), "speed tap changes playback rate");
-    equal(element("speed-notice").hidden, true, "accepted speeds do not show a warning below the video");
-    equal(button.getAttribute("aria-pressed"), "true", "accepted speed is selected");
-    equal(fakeRates.filter(node => node.getAttribute("aria-pressed") === "true").length, 1, "only the accepted speed is selected");
-  }
-  equal(fakeVideo.pauseCalls, 0, "changing speed keeps playback running");
-  fakeVideo.playbackRate = 1.5;
-  fakeVideo.listeners.ratechange[0]();
-  equal(element("actual-speed").hidden, false, "external unsupported preset remains visible");
-  equal(element("actual-speed").textContent, "1.5× actual", "external native speed is reported");
-  assert(fakeRates.every(node => node.getAttribute("aria-pressed") === "false"), "no incorrect preset is selected");
-  Object.defineProperty(fakeVideo, "playbackRate", { configurable: true, get() { return 1; }, set(value) { throw new Error("unsupported"); } });
-  fakeRates[4].listeners.click[0]();
-  equal(fakeRates[2].getAttribute("aria-pressed"), "true", "rejected speed retains actual normal rate");
-  equal(element("speed-notice").hidden, false, "rejected speed has visible feedback");
-  Object.defineProperty(fakeVideo, "playbackRate", { configurable: true, writable: true, value: 1 });
-  fakeSkips[0].listeners.click[0]();
-  equal(fakeVideo.currentTime, 45.125, "back five seconds keeps precision");
-  fakeSkips[1].listeners.click[0]();
-  equal(fakeVideo.currentTime, 50.125, "forward five seconds keeps precision");
-  showView("player");
-  assert(document.body.classList.contains("player-open"), "editing activates the compact landscape layout");
-  equal(element("media-navigation").hidden, false, "video navigation is available while editing");
-  showView("selections");
-  assert(!document.body.classList.contains("player-open"), "selections returns to the browsing layout");
-  equal(element("media-navigation").hidden, true, "video navigation is hidden outside the player");
-  setup();
-  loseControl("Editor control was transferred to another page");
-  equal(element("capture").disabled, true, "control loss disables writes");
-  assert([...fakeRates, ...fakeSkips].every(button => !button.disabled), "control loss leaves playback controls available");
-  equal(fakeVideo.pauseCalls, 0, "control loss does not pause playback");
-  equal(element("workspace").hidden, false, "control loss keeps the player visible");
-  equal(element("control-notice").hidden, false, "control loss offers an explicit takeover");
-
-  setup();
-  let sent;
-  transport = async (path, options) => {
-    sent = { path, ...options, body: JSON.parse(options.body) };
-    // Playback advances while the PC processes the capture.
-    fakeVideo.currentTime = 60.75;
-    return { ok: true, json: async () => ({ revision: "saved", selections: [{ id: sent.body.id, file: state.file, start: 35.125, end: 65.125, available: true }] }) };
-  };
-  await save("capture");
-  equal(sent.body.time, 50.125, "capture samples fractional currentTime before network");
-  equal(fakeVideo.pauseCalls, 0, "capture never pauses playback");
-  equal(fakeVideo.paused, false, "capture continues playback");
-  equal(state.selections[0].start, 35.125, "capture installs confirmed server result");
-  assert(element("toast").textContent.startsWith("Saved"), "confirmed save message");
-  equal(sent.headers["X-Page-Id"], state.page, "save carries page identity");
-  equal(sent.headers["X-Controller-Token"], state.token, "save carries token");
-  assert(sent.path.includes(encodeURIComponent(state.project)), "Unicode project identity is encoded");
-
-  setup(); state.in = 10.25; state.out = 90.875;
-  transport = async (path, options) => {
-    sent = JSON.parse(options.body);
-    // User marks a new range while the old one is being persisted.
-    state.in = 95;
-    return { ok: true, json: async () => ({ revision: "manual", selections: [{ ...sent, available: true }] }) };
-  };
-  await save("range");
-  equal(sent.start, 10.25, "manual IN"); equal(sent.end, 90.875, "manual OUT");
-  equal(state.in, 95, "new IN is not cleared by previous save");
-  equal(fakeVideo.pauseCalls, 0, "manual save never pauses");
-  state.in = 100; state.out = 2;
-  let calls = 0; transport = async () => { calls++; };
-  await save("range"); equal(calls, 0, "invalid manual range never submitted");
-
-  setup();
-  transport = async () => ({ ok: false, json: async () => ({ error: { code: "storage_error", message: "Disk full; not saved." } }) });
-  await save("capture"); equal(element("toast").textContent, "Disk full; not saved.", "failed save is visible");
-  equal(state.saving, false, "controls recover from save failure");
-
-  setup(); state.in = 10.25; state.out = 90.875;
-  let failedCalls = 0;
-  transport = async () => { failedCalls++; throw new Error("network timeout"); };
-  await save("range");
-  equal(failedCalls, 1, "uncertain save is never retried");
-  equal(state.owned, true, "network failure does not revoke ownership");
-  equal(state.ready, true, "network failure preserves media readiness");
-  equal(element("workspace").hidden, false, "network failure leaves player visible");
-  equal(fakeVideo.pauseCalls, 0, "network failure does not pause playback");
-  equal(fakeVideo.currentTime, 50.125, "network failure preserves playback position");
-  equal(state.in, 10.25, "uncertain save preserves IN"); equal(state.out, 90.875, "uncertain save preserves OUT");
-  equal(state.revision, "initial", "uncertain save never installs a confirmed revision");
-  assert(element("toast").classList.contains("error"), "uncertain save displays an error");
-  assert(element("toast").textContent.includes("Cannot confirm"), "uncertain save does not claim success");
-
-  setup();
-  editSelection({ id: "editing-selection-identity", file: state.file, start: 20.25, end: 80.875, available: true });
-  transport = async () => { throw new Error("temporary network failure"); };
-  await changeSelection({ preventDefault() {} }, "edit");
-  equal(element("edit-dialog").open, true, "failed adjustment keeps the dialog open");
-  equal(element("edit-start").value, "20.25", "failed adjustment preserves input");
-  equal(element("edit-error").hidden, false, "failed adjustment displays its error");
-  equal(fakeVideo.pauseCalls, 0, "failed adjustment introduces no playback pause");
-  element("edit-dialog").close();
-
-  setup(); state.in = 10.25; state.out = 90.875;
-  let transferredCalls = 0;
-  transport = async () => { transferredCalls++; return reply({ error: { code: "controller_transferred", message: "Editor control was transferred to another page" } }, false); };
-  await save("capture");
-  equal(transferredCalls, 1, "rejected stale save never silently reclaims control");
-  equal(state.owned, false, "stale controller loses edit authority");
-  equal(element("control-message").textContent, "Editor control was transferred to another page", "takeover is clearly explained");
-  equal(element("control-notice").hidden, false, "previous controller is offered Take Control");
-  equal(element("capture").disabled, true, "stale controller cannot capture");
-  equal(fakeVideo.pauseCalls, 0, "takeover rejection does not pause video");
-  equal(state.in, 10.25, "takeover rejection preserves unfinished IN");
-  const restoringPaths = [];
-  transport = async path => { restoringPaths.push(path); return libraryReply(path); };
-  await element("take-control").listeners.click[0]();
-  equal(restoringPaths[0], "/api/controller/takeover", "previous owner takes control only with another tap");
-  equal(fakeVideo.pauseCalls, 0, "explicit takeover keeps current playback running");
-  equal(fakeVideo.currentTime, 50.125, "explicit takeover preserves playback position");
-  equal(state.in, 10.25, "explicit takeover preserves unfinished IN");
-  equal(element("control-notice").hidden, true, "successful takeover removes notice");
-
-  setup(); state.in = 10.25; state.out = 90.875;
-  transport = async () => { throw new Error("release response lost"); };
-  await exitEditor();
-  equal(state.owned, true, "unconfirmed release does not claim a successful exit");
-  equal(fakeVideo.pauseCalls, 0, "failed exit leaves playback running");
-  equal(element("workspace").hidden, false, "failed exit leaves player visible");
-  let releaseRequest;
-  transport = async (path, options) => { releaseRequest = { path, body: JSON.parse(options.body) }; return reply({ released: true }); };
-  await element("exit-editor").listeners.click[0]();
-  equal(releaseRequest.path, "/api/controller/release", "Exit Editor explicitly releases");
-  equal(releaseRequest.body.token, "live-token", "release requires the current opaque token");
-  equal(state.owned, false, "confirmed exit clears local edit authority");
-  equal(state.token, null, "confirmed exit clears local token");
-  equal(fakeVideo.pauseCalls, 1, "explicit exit pauses only after confirmed release");
-  equal(element("gate-title").textContent, "Editor exited", "confirmed exit shows its resume screen");
-  equal(element("retry").textContent, "Enter Editor", "user can enter editing again");
-  transport = async path => libraryReply(path, "reentered-token");
-  await element("retry").listeners.click[0]();
-  equal(state.owned, true, "Enter Editor reacquires normally");
-  equal(state.token, "reentered-token", "reentry uses a new token");
-  equal(fakeVideo.currentTime, 50.125, "reentry preserves current playback position");
-  equal(state.in, 10.25, "reentry preserves unfinished marks");
-
-  setup();
-  let finish;
-  transport = () => new Promise(resolve => { finish = resolve; });
-  const pending = save("capture");
-  loseControl("Editor control was transferred to another page");
-  finish({ ok: true, json: async () => ({ revision: "late", selections: [] }) });
-  await pending;
-  equal(state.owned, false, "known takeover disables authority");
-  assert(state.revision !== "late", "late response from old session never installs stale data");
-
-  setup();
-  let failLate;
-  transport = () => new Promise((resolve, reject) => { failLate = reject; });
-  const oldRequest = request("/api/projects").catch(error => error);
-  loseControl("Editor control was transferred to another page");
-  state.owned = true; state.token = "new-live-token";
-  failLate(new Error("old network timeout"));
-  const oldError = await oldRequest;
-  equal(oldError.code, "session_changed", "old failed network request is ignored after explicit reacquisition");
-  handleError(oldError); equal(state.owned, true, "old network error never revokes the new session");
-
-  setup();
-  state.stopAt = 12; fakeVideo.currentTime = 12.25;
-  updateTime(); equal(fakeVideo.paused, true, "replay stops at OUT"); equal(fakeVideo.currentTime, 12, "replay clamps OUT");
-  state.stopAt = 30; seek(60); equal(state.stopAt, null, "manual seeking exits bounded replay");
-  equal(fakeVideo.currentTime, 60, "seek control");
-
-  equal(intervalCalls, 0, "all ownership actions run without periodic network monitoring");
-  assert(timerDelays.every(delay => [12000, 2600, 8000].includes(delay)), "only request deadlines and toast dismissal use timers");
-}
-checks().then(() => {
-  if (typeof print === "function") print("Frontend behavior checks passed");
-  else console.log("Frontend behavior checks passed");
-}).catch(error => {
-  if (typeof print === "function") { print(String(error.stack || error)); quit(1); }
-  else { console.error(error); process.exit(1); }
-});
+checks().then(()=>{if(typeof print==="function")print("Frontend behavior checks passed");else console.log("Frontend behavior checks passed");},error=>{if(typeof print==="function"){print(error.stack);throw error;}else{console.error(error);process.exitCode=1;}});
