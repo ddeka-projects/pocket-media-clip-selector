@@ -20,7 +20,7 @@ function readPreference() {
   return null;
 }
 const state = { page: newId(), token: null, owned: false, epoch: 0, controlBusy: false, busy: false,
-  projects: [], categories: [], project: null, meta: null, source: null, view: "projects", loadVersion: 0,
+  projects: [], project: null, meta: null, source: null, view: "projects", loadVersion: 0,
   remembered: readPreference(), drafts: new Map(), watchPending: null, loaded: null,
   ready: false, dragging: false, pendingSeek: null, sourceDialog: null, linking: null,
   editing: null, confirming: null, conflictSource: null, toast: null };
@@ -101,8 +101,7 @@ function installProject(snapshot) {
   if (snapshot.name !== state.project) return false;
   state.loadVersion += 1; state.meta = snapshot;
   const index = state.projects.findIndex((project) => project.name === snapshot.name);
-  const summary = { name: snapshot.name, category: snapshot.category, status: snapshot.status,
-    initialized: snapshot.initialized, source_count: snapshot.source_count, bookmark_count: snapshot.bookmark_count, media_count: snapshot.media.length };
+  const summary = { name: snapshot.name, source_count: snapshot.source_count, bookmark_count: snapshot.bookmark_count, media_count: snapshot.media.length };
   if (index < 0) state.projects.push(summary); else state.projects[index] = summary;
   if (state.source && !currentSource()) { state.source = null; showView("sources"); }
   else render();
@@ -123,8 +122,7 @@ function reconcilePending(snapshot) {
 }
 async function loadProjects() {
   const result = await request("/api/projects");
-  state.projects = result.projects; state.categories = result.categories;
-  for (const id of ["project-new-category", "initialize-category"]) options($(id), state.categories.map((name) => [name, name]), $(id).value, "Choose a category");
+  state.projects = result.projects;
   render();
 }
 async function loadCurrent() {
@@ -210,18 +208,17 @@ function renderProjects() {
   for (const project of state.projects) {
     const card = button("", "library-card", () => void openProject(project.name).catch(handleError));
     const text = node("span", "", "card-text"); text.append(node("span", project.name, "card-title"));
-    text.append(node("span", project.error ? "Metadata needs attention" : project.initialized
-      ? `${project.category} · ${project.status} · ${project.source_count} sources · ${project.bookmark_count} bookmarks`
-      : `Choose a category · ${project.media_count} local MP4s`, "card-meta"));
+    text.append(node("span", project.error ? "Metadata needs attention" : projectCounts(project), "card-meta"));
     card.append(text, node("span", "›", "card-arrow")); list.append(card);
   }
   if (!state.projects.length) empty(list, "Create a project to start logging moments. No downloaded video is needed.");
 }
+function projectCounts(project) {
+  return `${project.source_count} ${project.source_count === 1 ? "source" : "sources"} · ${project.bookmark_count} ${project.bookmark_count === 1 ? "bookmark" : "bookmarks"}`;
+}
 function renderSources() {
   const meta = state.meta; $("sources-title").textContent = meta.name;
-  $("project-category").textContent = meta.category || "EXISTING PROJECT FOLDER";
-  $("initialize-form").hidden = meta.initialized; $("project-status").value = meta.status;
-  $("project-status").parentElement.hidden = !meta.initialized;
+  $("source-summary").textContent = projectCounts(meta);
   const list = $("source-list"); list.replaceChildren();
   for (const source of meta.sources) {
     const card = node("article", "", "source-card");
@@ -233,8 +230,8 @@ function renderSources() {
     const manage = button("Manage", "text-button write-action", () => openSourceDialog(source));
     manage.disabled = !state.owned || state.busy; actions.append(manage); card.append(title, detail, actions); list.append(card);
   }
-  if (meta.initialized && !meta.sources.length) empty(list, `Add ${meta.next_source_name}, or give your first source a custom name.`);
-  $("local-media").hidden = !meta.initialized || !meta.media.length;
+  if (!meta.sources.length) empty(list, `Add ${meta.next_source_name}, or give your first source a custom name.`);
+  $("local-media").hidden = !meta.media.length;
   const mediaList = $("local-media-list"); mediaList.replaceChildren();
   for (const file of meta.media) {
     const card = node("div", "", "local-file"); card.append(node("p", file.name, "card-title"));
@@ -350,9 +347,9 @@ async function saveWatch(retry = false) {
 }
 function updateControls() {
   const write = state.owned && !state.busy && !state.controlBusy;
-  for (const id of ["new-project", "project-save", "initialize-save", "new-source", "quick-add-source", "source-save", "source-remove", "link-save", "edit-save", "confirm-save", "next-episode", "quick-save", "project-status"]) $(id).disabled = !write;
+  for (const id of ["new-project", "project-save", "new-source", "quick-add-source", "source-save", "source-remove", "link-save", "edit-save", "confirm-save", "next-episode", "quick-save"]) $(id).disabled = !write;
   for (const element of document.querySelectorAll(".write-action")) element.disabled = !write;
-  $("new-source").disabled ||= !state.meta?.initialized;
+  $("new-source").disabled ||= !state.meta;
   $("quick-save").disabled ||= !currentSource();
   $("next-episode").disabled ||= !currentSource();
   $("quick-project").disabled = $("quick-source").disabled = state.busy || state.controlBusy;
@@ -367,7 +364,7 @@ function updateControls() {
 }
 
 function openSourceDialog(source = null) {
-  if (!state.owned || !state.meta?.initialized || state.busy) return;
+  if (!state.owned || !state.meta || state.busy) return;
   state.sourceDialog = { project: state.project, original: source?.name || null, revision: state.meta.revision };
   $("source-dialog-title").textContent = source ? "Manage source" : "New source";
   $("source-name").value = source?.name || state.meta.next_source_name;
@@ -415,7 +412,7 @@ $("quick-project").addEventListener("change", () => {
   const name = $("quick-project").value;
   void openProject(name, state.projects.some((project) => project.name === name) && state.remembered?.project === name ? state.remembered.source : null).then((opened) => {
     if (!opened) return;
-    if (state.view === "sources" && state.meta.initialized && state.meta.sources.length) chooseSource(state.meta.sources[0].name);
+    if (state.view === "sources" && state.meta.sources.length) chooseSource(state.meta.sources[0].name);
   }).catch(handleError);
 });
 $("quick-source").addEventListener("change", () => { $("quick-message").hidden = true; chooseSource($("quick-source").value); });
@@ -430,19 +427,12 @@ $("next-episode").addEventListener("click", () => {
     if (state.project === project) chooseSource(name);
   });
 });
-$("new-project").addEventListener("click", () => { $("project-name").value = ""; $("project-new-category").value = ""; $("project-error").hidden = true; $("project-dialog").showModal(); $("project-name").focus(); });
+$("new-project").addEventListener("click", () => { $("project-name").value = ""; $("project-error").hidden = true; $("project-dialog").showModal(); $("project-name").focus(); });
 $("project-form").addEventListener("submit", (event) => {
   event.preventDefault(); void mutate(async () => {
-    const result = await request("/api/projects", { method: "POST", body: { name: $("project-name").value, category: $("project-new-category").value } });
+    const result = await request("/api/projects", { method: "POST", body: { name: $("project-name").value } });
     state.project = result.name; state.source = null; installProject(result); $("project-dialog").close(); showView("sources"); toast("Project created on your PC.");
   }, (error) => { fieldError("project-error", error); handleError(error); });
-});
-$("initialize-form").addEventListener("submit", (event) => {
-  event.preventDefault(); void mutate(async () => { installProject(await request(url("/api/project/initialize"), { method: "POST", revision: state.meta.revision, body: { category: $("initialize-category").value } })); $("initialize-error").hidden = true; }, (error) => { fieldError("initialize-error", error); handleError(error); });
-});
-$("project-status").addEventListener("change", () => {
-  const status = $("project-status").value;
-  void mutate(async () => { installProject(await request(url("/api/project"), { method: "PATCH", revision: state.meta.revision, body: { status } })); }, (error) => { $("project-status").value = state.meta.status; handleError(error); });
 });
 for (const id of ["new-source", "quick-add-source"]) $(id).addEventListener("click", () => openSourceDialog());
 $("source-form").addEventListener("submit", (event) => {

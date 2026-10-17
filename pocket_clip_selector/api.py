@@ -13,7 +13,7 @@ from .errors import AppError
 from .controller import ControllerOwnership
 from .library import Library
 from .process_lock import ProcessLock
-from .storage import ProjectStore, CATEGORIES, STATUSES, MAX_SECONDS
+from .storage import ProjectStore, MAX_SECONDS
 from .streaming import media_response
 
 STATIC = Path(__file__).parent / "static"
@@ -35,15 +35,6 @@ class Owner(Page):
 
 class NewProject(Body):
     name: StrictStr
-    category: StrictStr
-
-
-class Category(Body):
-    category: StrictStr
-
-
-class Status(Body):
-    status: StrictStr
 
 
 class Source(Body):
@@ -99,7 +90,7 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(request, error):
-        return error_response(AppError("Invalid request. Bookmark times must be finite nonnegative numbers; names and categories must be text.", 422, "invalid_request"))
+        return error_response(AppError("Invalid request. Bookmark times must be finite nonnegative numbers; names must be text.", 422, "invalid_request"))
 
     @app.middleware("http")
     async def local_requests(request, call_next):
@@ -150,27 +141,17 @@ def create_app(settings: Settings | None = None, *, controller=None, lock_librar
     @app.get("/api/projects")
     def projects(request: Request):
         with access(request):
-            return {"projects": store.projects(), "categories": CATEGORIES, "statuses": STATUSES}
+            return {"projects": store.projects()}
 
     @app.post("/api/projects", status_code=201)
     def create_project(request: Request, body: NewProject):
         with access(request):
-            return store.create(body.name, body.category)
+            return store.create(body.name)
 
     @app.get("/api/project")
     def project(request: Request, project: str):
         with access(request):
             return store.list(project)
-
-    @app.post("/api/project/initialize")
-    def initialize(request: Request, project: str, body: Category):
-        with access(request):
-            return store.initialize(project, body.category, request.headers.get("if-match"))
-
-    @app.patch("/api/project")
-    def change_status(request: Request, project: str, body: Status):
-        with access(request):
-            return store.status(project, body.status, request.headers.get("if-match"))
 
     @app.post("/api/sources", status_code=201)
     def add_source(request: Request, project: str, body: Source):

@@ -33,6 +33,10 @@ h2 { font-size:23px; letter-spacing:-.4px; line-height:1.2; }
 .control-notice p { margin-top:3px; color:var(--muted); font-size:11px; }
 .control-notice button { flex-shrink:0; min-height:36px; font-size:12px; padding:6px 10px; }
 .section-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:6px 0 12px; }
+.section-heading > div:first-child { min-width:0; }
+.heading-actions { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.heading-actions button { font-size:12px; }
+#source-summary { margin-top:6px; }
 .card-list { margin-top:24px; display:grid; gap:10px; }
 .library-card { display:flex; justify-content:space-between; align-items:center; gap:20px; text-align:left; width:100%; padding:14px; min-height:78px; }
 .card-text { min-width:0; }
@@ -89,12 +93,6 @@ video { width:100%; display:block; aspect-ratio:16/9; max-height:55vh; backgroun
 label { display:block; font-size:13px; color:var(--muted); }
 input[type=text],select { display:block; width:100%; min-width:0; min-height:44px; padding:10px; margin-top:6px; border:1px solid var(--line); border-radius:10px; background:var(--bg); color:var(--text); font-size:16px; }
 select { height:44px; appearance:none; padding-right:28px; background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%); background-position:calc(100% - 16px) 50%,calc(100% - 11px) 50%; background-size:5px 5px; background-repeat:no-repeat; }
-.status-control { display:flex; align-items:center; gap:8px; }
-.status-control select { width:auto; margin:0; font-size:13px; padding:6px 8px; }
-.setup-card { border:1px solid var(--line); border-radius:14px; padding:18px; margin-top:16px; background:var(--panel); }
-.setup-card h2 { font-size:20px; margin-bottom:8px; }
-.setup-card label { margin-top:16px; }
-.setup-card button { width:100%; margin-top:14px; }
 .quick-pickers { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
 .quick-pickers label { min-width:0; }
 .quick-form { max-width:540px; margin:20px auto 0; }

@@ -44,11 +44,11 @@ function assert(condition,message){if(!condition)throw new Error(message);}
 function equal(actual,expected,message){assert(actual===expected,`${message}: ${actual} !== ${expected}`);}
 function reply(payload,ok=true){return {ok,json:async()=>payload};}
 function snapshot(bookmarks=[],source="Episode 01",file="scene.mp4"){
- return {name:"A show – 日本語",initialized:true,category:"Anime",status:"Discovering",revision:"revision-next",next_source_name:"Episode 02",media:file?[{name:file}]:[],source_count:1,bookmark_count:bookmarks.length,
+ return {name:"A show – 日本語",revision:"revision-next",next_source_name:"Episode 02",media:file?[{name:file}]:[],source_count:1,bookmark_count:bookmarks.length,
   sources:[{name:source,media_file:file,available:Boolean(file),next_episode_name:"Episode 02",bookmarks}]};
 }
 function setup(view="player"){
- Object.assign(state,{project:"A show – 日本語",source:"Episode 01",meta:snapshot(),projects:[{name:"A show – 日本語",initialized:true}],categories:["Anime"],
+ Object.assign(state,{project:"A show – 日本語",source:"Episode 01",meta:snapshot(),projects:[{name:"A show – 日本語"}],
   owned:true,token:"live-token",ready:true,busy:false,controlBusy:false,view,watchPending:null,pendingSeek:null,loaded:{project:"A show – 日本語",file:"scene.mp4"},drafts:new Map()});
  Object.assign(fakeVideo,{paused:false,pauseCalls:0,currentTime:50.125,duration:120.5,playbackRate:1});
  fakeVideo.setAttribute("src","/media");element("workspace").hidden=false;element("gate").hidden=true;element("control-notice").hidden=true;element("toast").hidden=true;

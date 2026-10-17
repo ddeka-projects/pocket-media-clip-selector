@@ -13,8 +13,7 @@ from .errors import AppError
 from .library import sort_key, validate_name
 from .mp4 import duration
 
-CATEGORIES = ("Anime", "Donghua", "Other Animation", "Live Action Movies", "Live Action Series", "Video Game")
-STATUSES = ("Discovering", "Editing")
+SCHEMA_VERSION = 2
 MAX_SECONDS = 3_599_999.999  # Up to 999 hours; shared with the client parser.
 ID_PATTERN = r"[A-Za-z0-9_-]{16,128}"
 
@@ -96,12 +95,11 @@ class ProjectStore:
             payload = b""
         revision = hashlib.sha256(payload).hexdigest()
         if not payload and not path.exists():
-            return {"version": 1, "category": None, "status": "Discovering", "sources": {}}, revision
+            return {"version": SCHEMA_VERSION, "sources": {}}, revision
         try:
             data = json.loads(payload, object_pairs_hook=json_object)
-            if (type(data) is not dict or set(data) != {"version", "category", "status", "sources"}
-                    or type(data["version"]) is not int or data["version"] != 1
-                    or data["category"] not in CATEGORIES or data["status"] not in STATUSES
+            if (type(data) is not dict or set(data) != {"version", "sources"}
+                    or type(data["version"]) is not int or data["version"] != SCHEMA_VERSION
                     or type(data["sources"]) is not dict):
                 raise ValueError("unsupported project format")
             keys, identities = set(), set()
@@ -130,8 +128,7 @@ class ProjectStore:
                     "available": row["media_file"] is not None and self.library.available(project, row["media_file"]),
                     "bookmarks": sorted(row["bookmarks"], key=lambda mark: (mark["time"], mark["id"]))}
                    for name, row in sorted(data["sources"].items(), key=lambda item: sort_key(item[0]))]
-        return {"name": project, "revision": revision, "initialized": data["category"] is not None,
-                "category": data["category"], "status": data["status"], "sources": sources,
+        return {"name": project, "revision": revision, "sources": sources,
                 "source_count": len(sources), "bookmark_count": sum(len(row["bookmarks"]) for row in sources),
                 "next_source_name": next_episode(data["sources"]), "media": self.library.files(project)}
 
@@ -145,9 +142,9 @@ class ProjectStore:
             for row in rows:
                 try:
                     snapshot = self.list(row["name"])
-                    row.update({key: snapshot[key] for key in ("initialized", "category", "status", "source_count", "bookmark_count")})
+                    row.update({key: snapshot[key] for key in ("source_count", "bookmark_count")})
                 except (AppError, OSError) as error:
-                    row.update(initialized=False, category=None, status=None, source_count=None, bookmark_count=None, error=str(error))
+                    row.update(source_count=None, bookmark_count=None, error=str(error))
             return rows
 
     def _write(self, project, data, previous):
@@ -168,40 +165,16 @@ class ProjectStore:
             Path(temporary).unlink(missing_ok=True)
         return self._snapshot(project, data, hashlib.sha256(payload).hexdigest())
 
-    def _expected(self, project, expected, *, initialized=True):
+    def _expected(self, project, expected):
         data, revision = self._load(project)
         if not expected or expected != revision:
             raise AppError("Project changed. Refresh it before saving.", 409, "project_conflict")
-        if initialized and data["category"] is None:
-            raise AppError("Choose a project category first.", 409, "project_uninitialized")
         return data, revision
 
-    def create(self, name, category):
+    def create(self, name):
         with self.lock:
-            if category not in CATEGORIES:
-                raise AppError("Choose one of the six project categories.", 422, "invalid_category")
             project = self.library.create_project(name)
-            data, revision = self._load(project)
-            data["category"] = category
-            return self._write(project, data, revision)
-
-    def initialize(self, project, category, expected):
-        with self.lock:
-            data, revision = self._expected(project, expected, initialized=False)
-            if category not in CATEGORIES:
-                raise AppError("Choose one of the six project categories.", 422, "invalid_category")
-            if data["category"] is not None:
-                raise AppError("This project is already initialized.", 409, "project_conflict")
-            data["category"] = category
-            return self._write(project, data, revision)
-
-    def status(self, project, status, expected):
-        with self.lock:
-            data, revision = self._expected(project, expected)
-            if status not in STATUSES:
-                raise AppError("Choose Discovering or Editing.", 422, "invalid_status")
-            data["status"] = status
-            return self._write(project, data, revision)
+            return self.list(project)
 
     def _source(self, data, name):
         if name not in data["sources"]:

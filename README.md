@@ -36,14 +36,14 @@ You need Windows PowerShell 5.1+, Python 3.10+ from [python.org](https://www.pyt
        totally-arbitrary-name.mp4
        Source\                         # ignored
          original.mkv
-       .clipselector\                  # created when initialized
+       .clipselector\                  # created with the first source
          manifest.json                 # optional; owned by your processor
          project.json                  # owned by this app
      An Example Movie\
        movie.mp4
    ```
 
-   Every immediate child directory is a project, including empty projects. Only MP4 files directly inside a project are playable (`.MP4` also works). Loose files, other formats, and all nested media are ignored. Projects and media sort by case-insensitive filename, then exact filename. Named sources are independent of filenames, and no media manifest is required. Existing folders can be initialized by choosing a category in the app. Links, junctions, and other Windows reparse points in the configured path or library are refused.
+   Every immediate child directory is a project, including empty projects. Only MP4 files directly inside a project are playable (`.MP4` also works). Loose files, other formats, and all nested media are ignored. Projects and media sort by case-insensitive filename, then exact filename. Named sources are independent of filenames, and no media manifest is required. Existing folders open immediately and can accept sources without setup. Links, junctions, and other Windows reparse points in the configured path or library are refused.
 
 4. Start in the foreground:
 
@@ -102,8 +102,8 @@ Removal stops and unregisters the task. It leaves media, project metadata, and b
 
 ## Bookmark workflow
 
-1. **Projects:** create a folder with one category: Anime, Donghua, Other Animation, Live Action Movies, Live Action Series, or Video Game. Existing folders ask for a category once. Each project shows its category, Discovering/Editing status, source count, and bookmark count. Change status from Sources.
-2. **Sources:** add Episode 01, Episode 02, etc., or use any custom name. The default naming is the same for all categories. Manage lets you rename a source, link/relink/unlink its MP4, or confirm removing the source and its bookmarks. Removing a source never deletes its MP4.
+1. **Projects:** enter a name to create its folder. Existing folders open directly. Project cards and the Sources header show source and bookmark counts; there is no media category or workflow status to maintain.
+2. **Sources:** add Episode 01, Episode 02, etc., or use any custom name. Episode naming is the default for every project. Manage lets you rename a source, link/relink/unlink its MP4, or confirm removing the source and its bookmarks. Removing a source never deletes its MP4.
 3. **Quick Log:** choose a project/source, type a time, and tap Save Bookmark or submit from the keyboard. The last chosen project/source is remembered on this phone, and a new page opens Quick Log for it. Save confirmation comes from the PC; the field then clears and the same source stays selected. Next Episode creates or opens the following numbered source in one tap. A custom source advances to the next suggested episode.
 4. **Bookmarks:** each source lists moments in time order. Edit or delete them even without media. Lists use simple whole-second labels; the local player retains fractional precision internally. An unchanged edit retains that precision. Nearby or identical times are kept as separate intentional bookmarks when saved as separate actions.
 5. **Watch:** link a top-level MP4 from Manage, or choose Watch beside a Local MP4 and select an existing source/create one. Rotate to landscape. Bookmark samples the current playback time immediately and saves one timestamp without pausing. Tap a saved bookmark to seek to that moment and continue watching; it never stops automatically. A manual bookmark beyond a linked video's duration remains saved; playback shows the end and asks you to check the association.
@@ -131,13 +131,11 @@ The landscape player retains scrubbing, Play/Pause, ±5-second seeking, and 1× 
 
 ## Project metadata and API
 
-A project has one metadata file, `.clipselector\project.json`:
+A project gets `.clipselector\project.json` when its first source is saved. Until then, its folder is already usable and has zero sources/bookmarks. The metadata contains only a format version and named sources:
 
 ```json
 {
-  "version": 1,
-  "category": "Anime",
-  "status": "Discovering",
+  "version": 2,
   "sources": {
     "Episode 07": {
       "media_file": null,
@@ -151,19 +149,17 @@ A project has one metadata file, `.clipselector\project.json`:
 
 Source names are the identities and JSON keys. A rename atomically replaces the key while keeping the association and bookmarks. `media_file` is an exact filename or null, separate from source identity. Bookmark IDs protect explicit retries from duplicate writes. A missing or renamed MP4 never erases/relabels its source or bookmarks. The app does not detect replacement content under the same filename.
 
-The independent processor's `.clipselector\manifest.json`, `Source\` files, and prepared MP4s are untouched. Old `.clipselector\selections.json` is ignored and left in place: this is a breaking redesign without migration or legacy endpoints. A damaged/unsupported new `project.json`, duplicate JSON key, or invalid stored bookmark is reported and never overwritten. Other projects remain browseable.
+The independent processor's `.clipselector\manifest.json`, `Source\` files, and prepared MP4s are untouched. Metadata uses schema version 2 without compatibility or migration for the earlier category/status format. To start fresh with an older development project, stop the server and move or remove only its `.clipselector\project.json`, then restart and refresh. This resets that project's stored sources/bookmarks; media and the processor manifest stay in place. Old `.clipselector\selections.json` is ignored and left in place. A damaged/unsupported new `project.json`, duplicate JSON key, or invalid stored bookmark is reported and never overwritten. Other projects remain browseable.
 
-Every mutation saves on the PC using a serialized fresh read, temporary-file write, flush/fsync, revision recheck, and atomic replacement. Revisions are SHA-256 hashes of the stored bytes, including an empty-file hash for uninitialized folders. Back up `project.json` with the project. An interrupted write may leave a harmless `.project-*.tmp` file; remove it only after stopping the server. A failed initial project save can leave an empty folder; refresh Projects and initialize that folder rather than creating another one.
+Source and bookmark mutations save on the PC using a serialized fresh read, temporary-file write, flush/fsync, revision recheck, and atomic replacement. Revisions are SHA-256 hashes of the stored bytes, using the hash of empty bytes when no metadata file exists yet. Back up `project.json` with the project. An interrupted write may leave a harmless `.project-*.tmp` file; remove it only after stopping the server. Project creation only creates a folder. If saving its first source fails, the folder stays usable; explicitly retry that source save.
 
 All library/mutation API calls require `X-Page-Id` and `X-Controller-Token`. The same-origin interface uses these routes:
 
 | Route | Behavior |
 | --- | --- |
-| `GET /api/projects` | Project summaries, categories, statuses |
-| `POST /api/projects` | Create a safe folder and category metadata |
+| `GET /api/projects` | Project names and source/bookmark/media counts |
+| `POST /api/projects` | Create a safe folder from `{name}` |
 | `GET /api/project?project=…` | Sources, ordered bookmarks, available top-level MP4s, revision |
-| `POST /api/project/initialize` | Categorize an existing folder |
-| `PATCH /api/project` | Change Discovering/Editing status |
 | `POST /api/sources` | Create a named source with optional `media_file` |
 | `PATCH /api/source?project=…&source=…` | Rename and/or change association; omitted fields are preserved |
 | `DELETE /api/source` | Remove that source and its bookmarks |
@@ -173,7 +169,7 @@ All library/mutation API calls require `X-Page-Id` and `X-Controller-Token`. The
 | `GET /api/media-info` | Read a prepared MP4's duration |
 | `GET/HEAD /media?project=…&file=…` | Direct MP4 byte streaming, independent of ownership |
 
-Project-specific routes use the exact project query parameter; source/bookmark routes also use the exact source name. Initialization, status, source changes, and bookmark edit/delete require `If-Match` with the last revision. Add-bookmark requests append to a fresh snapshot without a duration lookup; replaying the same ID with different data is rejected. Nothing is queued offline.
+Project-specific routes use the exact project query parameter; source/bookmark routes also use the exact source name. Source changes and bookmark edit/delete require `If-Match` with the last revision. Add-bookmark requests append to a fresh snapshot without a duration lookup; replaying the same ID with different data is rejected. Nothing is queued offline.
 
 ## Editor ownership and uncertain saves
 
@@ -194,7 +190,6 @@ Logs stay in `logs\` beside the code. `server.log` rotates at 5 MiB with three b
 | PC URL fails | `.env`, Python/bootstrap, startup logs, task state, duplicate server/library lock |
 | PC works; iPhone cannot connect | Same LAN, PC awake, active adapter IPv4, Private network/firewall, guest Wi-Fi isolation |
 | Open elsewhere after reload | Explicitly Take Control; the previous page identity does not expire |
-| Project needs initialization | Choose one of the six categories; media and manifest stay untouched |
 | Save fails | Free disk space, folder creation/metadata permissions, valid `project.json`, server log |
 | Source has a missing MP4 | Manage → choose its current exact top-level filename; bookmarks stay with the source |
 | MP4 won't play or seek | Prepared H.264/compatible audio, stable local file, LAN throughput; Quick Log still works |
@@ -207,16 +202,16 @@ Logs stay in `logs\` beside the code. `server.log` rotates at 5 MiB with three b
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The suite covers project creation/initialization, categories/status/counts, source naming and duplicates, atomic rename/association changes, bookmark persistence without media, ordering/edit/delete, idempotent/concurrent adds, damaged JSON, atomic/fsync failures, revision conflicts, exact paths, symlinks, controller transfer/write ordering, process locks, MP4 duration, and HTTP byte ranges/HEAD/If-Range. The Windows junction check runs on Windows.
+The suite covers name-only project creation, immediately usable existing folders, content counts, source naming and duplicates, atomic rename/association changes, bookmark persistence without media, ordering/edit/delete, idempotent/concurrent adds, damaged JSON, atomic/fsync failures, revision conflicts, exact paths, symlinks, controller transfer/write ordering, process locks, MP4 duration, and HTTP byte ranges/HEAD/If-Range. The Windows junction check runs on Windows.
 
 Frontend checks run under Node.js when available or the development Mac's JavaScriptCore. They cover the timestamp table and invalid/boundary inputs, remembered names without saved tokens, Quick Log validation/Done submission/double-save guards/failed-save retention, idempotent retry, preserving newly typed input during a save, fractional local bookmarks, seek without auto-stop, speed acceptance/rejection, explicit Exit/Enter/takeover, stale responses, and lifecycle events with no polling. The app requires no Node.js or build tools.
 
-Development verification used Python 3.13: **44 tests passed, one Windows junction test skipped**. A live Uvicorn/WebKit workflow exercised phone-driven project/source creation, no-media Quick Log, duplicate source handling, rename/remove, bookmark editing, offline failure, a committed write with a lost response and explicit retry, remembered Quick Log after reload, later MP4 linking, Link & Watch, transport/speed/bookmark navigation, explicit controller takeover, and processor-file preservation. Layout checks used 393 × 852 portrait, 852 × 393 landscape with both notch orientations and conservative safe areas, a shorter 852 × 340 viewport, and 1280 × 900 desktop. Normal iPhone-sized landscape editing fits without scrolling. Safe areas and media playback were simulated; physical iPhone decoding, numeric keyboard behavior, and Windows startup still need the checks below.
+Development verification used Python 3.13: **45 tests passed, one Windows junction test skipped**. A live Uvicorn/WebKit workflow exercised name-only project creation, immediate use of existing folders without setup, source creation, no-media Quick Log, duplicate source handling, rename/remove, bookmark editing, offline failure, a committed write with a lost response and explicit retry, remembered Quick Log after reload, later MP4 linking, Link & Watch, transport/speed/bookmark navigation, explicit controller takeover, and processor-file preservation. Layout checks used 393 × 852 portrait, 852 × 393 landscape with both notch orientations and conservative safe areas, a shorter 852 × 340 viewport, and 1280 × 900 desktop. Normal iPhone-sized landscape editing fits without scrolling. Safe areas and media playback were simulated; physical iPhone decoding, numeric keyboard behavior, and Windows startup still need the checks below.
 
 ## Real Windows / iPhone checklist
 
 - [ ] Bootstrap/run foreground and scheduled startup on the intended Windows account, with spaces/Unicode in the library path. Confirm that account can create a project folder and atomically update its metadata. Check current-user/limited logon task, one-server locking, logs, restart on failure, and Private/LocalSubnet firewall scope. Run the Windows junction test.
-- [ ] Launch from the iPhone Home Screen without an address bar. Create a media-free project and source in portrait. Verify category/status/counts and all six categories' Episode defaults.
+- [ ] Launch from the iPhone Home Screen without an address bar. Create a media-free project and source in portrait. Verify source/bookmark counts and Episode defaults, including a project folder created outside the app.
 - [ ] Watch in VLC, switch to Quick Log, type `1742`, and save using the numeric keyboard's Done action/button. Confirm no colons are needed, invalid seconds stay visible, focus remains convenient, Next Episode takes one tap, and project/source changes are easy with the keyboard open.
 - [ ] Exit/reopen or reload the app, explicitly Take Control if prompted, and verify the last chosen project/source and confirmed bookmarks. Remember that unsaved live drafts do not survive page termination.
 - [ ] Interrupt Wi-Fi during a save. Confirm the entry remains, no success is claimed, no automatic retry occurs, and retrying an unchanged entry creates only one bookmark. Test unwritable metadata and disk-space failure; compare the existing JSON and media.

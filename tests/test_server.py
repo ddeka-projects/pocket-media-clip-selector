@@ -18,7 +18,7 @@ from pocket_clip_selector.controller import ControllerOwnership
 from pocket_clip_selector.library import sort_key
 from pocket_clip_selector.mp4 import duration
 from pocket_clip_selector.process_lock import ProcessLock
-from pocket_clip_selector.storage import CATEGORIES, MAX_SECONDS, source_key, source_name, next_episode, following_episode
+from pocket_clip_selector.storage import SCHEMA_VERSION, MAX_SECONDS, source_key, source_name, next_episode, following_episode
 from helpers import make_project, mp4_bytes
 
 
@@ -51,9 +51,7 @@ class ServerTests(unittest.TestCase):
     def revision(self):
         return {**self.headers, "If-Match": self.snapshot()["revision"]}
 
-    def prepare(self, category="Anime", file=None):
-        response = self.client.post("/api/project/initialize", params=self.query, headers=self.revision(), json={"category": category})
-        self.assertEqual(response.status_code, 200, response.text)
+    def prepare(self, file=None):
         response = self.add_source(self.source, file)
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
@@ -64,47 +62,62 @@ class ServerTests(unittest.TestCase):
     def bookmark(self, time=50.125, identity="bookmark-identity-1234", source=None, headers=None):
         return self.client.post("/api/bookmarks", params={**self.query, "source": source or self.source}, headers=headers or self.headers, json={"time": time, "id": identity})
 
-    def test_project_creation_categories_status_and_listing_counts(self):
-        for index, category in enumerate(CATEGORIES):
-            with self.subTest(category=category):
-                response = self.client.post("/api/projects", headers=self.headers, json={"name": f"新 Project {index}", "category": category})
-                self.assertEqual(response.status_code, 201, response.text)
-                self.assertEqual(response.json()["category"], category)
-                self.assertEqual(response.json()["status"], "Discovering")
-                self.assertEqual(response.json()["next_source_name"], "Episode 01")
-                self.assertEqual(response.json()["media"], [])
+    def test_project_creation_needs_only_name_and_lists_content_counts(self):
+        response = self.client.post("/api/projects", headers=self.headers, json={"name": "新 Project"})
+        self.assertEqual(response.status_code, 201, response.text)
+        project = response.json()
+        self.assertEqual(project["name"], "新 Project")
+        self.assertEqual(project["next_source_name"], "Episode 01")
+        self.assertEqual(project["sources"], [])
+        self.assertEqual(project["media"], [])
+        self.assertNotIn("initialized", project)
+        self.assertNotIn("category", project)
+        self.assertNotIn("status", project)
+        self.assertTrue((self.root / "新 Project").is_dir())
+        self.assertFalse((self.root / "新 Project" / ".clipselector").exists())
         self.prepare()
         self.bookmark()
-        updated = self.client.patch("/api/project", params=self.query, headers=self.revision(), json={"status": "Editing"})
-        self.assertEqual(updated.status_code, 200)
-        rows = self.client.get("/api/projects", headers=self.headers).json()["projects"]
-        row = next(row for row in rows if row["name"] == self.project)
-        self.assertEqual((row["category"], row["status"], row["source_count"], row["bookmark_count"]), ("Anime", "Editing", 1, 1))
-        self.assertEqual(self.client.patch("/api/project", params=self.query, headers=self.revision(), json={"status": "Completed"}).status_code, 422)
+        result = self.client.get("/api/projects", headers=self.headers).json()
+        self.assertEqual(set(result), {"projects"})
+        row = next(row for row in result["projects"] if row["name"] == self.project)
+        self.assertEqual(set(row), {"name", "media_count", "source_count", "bookmark_count"})
+        self.assertEqual((row["source_count"], row["bookmark_count"]), (1, 1))
+        self.assertEqual(set(json.loads(self.path.read_text())), {"version", "sources"})
+        self.assertEqual(json.loads(self.path.read_text())["version"], SCHEMA_VERSION)
 
-    def test_creation_rejects_unsafe_names_categories_and_collisions(self):
+    def test_creation_rejects_unsafe_names_and_collisions(self):
         for name in ["", "..", "../escape", "/tmp", "D:\\outside", "bad?name", "CON", "aux.txt", "LPT1", "end.", "x"*101, "a\x00b"]:
             with self.subTest(name=name):
-                self.assertIn(self.client.post("/api/projects", headers=self.headers, json={"name": name, "category": "Anime"}).status_code, [400, 422])
-        before = list(self.root.iterdir())
-        self.assertEqual(self.client.post("/api/projects", headers=self.headers, json={"name": "Nope", "category": "Music"}).status_code, 422)
-        self.assertEqual(list(self.root.iterdir()), before)
+                response = self.client.post("/api/projects", headers=self.headers, json={"name": name})
+                self.assertIn(response.status_code, [400, 422])
         for name in [self.project, self.project.upper()]:
-            self.assertEqual(self.client.post("/api/projects", headers=self.headers, json={"name": name, "category": "Anime"}).status_code, 409)
+            self.assertEqual(self.client.post("/api/projects", headers=self.headers, json={"name": name}).status_code, 409)
 
-    def test_external_folder_initialization_preserves_media_processor_files(self):
+    def test_removed_project_fields_and_setup_routes_are_not_supported(self):
+        before = list(self.root.iterdir())
+        response = self.client.post("/api/projects", headers=self.headers,
+            json={"name": "Unused", "category": "Anime", "status": "Discovering"})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(list(self.root.iterdir()), before)
+        self.assertEqual(self.client.post("/api/project/initialize", params=self.query, headers=self.headers).status_code, 404)
+        self.assertEqual(self.client.patch("/api/project", params=self.query, headers=self.headers, json={"status": "Editing"}).status_code, 405)
+
+    def test_external_folder_is_ready_immediately_and_preserves_processor_files(self):
         folder = self.root / self.project
         (folder / "Source").mkdir()
-        original = folder / "Source" / "stream.mkv"; original.write_bytes(b"original")
+        original = folder / "Source" / "stream.mkv"
+        original.write_bytes(b"original")
         self.path.parent.mkdir()
-        manifest = self.path.parent / "manifest.json"; manifest.write_bytes(b'{"processor":true}')
-        old_metadata = self.path.parent / "selections.json"; old_metadata.write_bytes(b"obsolete and ignored")
-        watched = [folder / self.file, original, manifest, old_metadata]
+        manifest = self.path.parent / "manifest.json"
+        manifest.write_bytes(b'{"processor":true}')
+        watched = [folder / self.file, original, manifest]
         before = [path.read_bytes() for path in watched]
-        self.assertFalse(self.snapshot()["initialized"])
+        project = self.snapshot()
+        self.assertEqual(project["sources"], [])
+        self.assertEqual(project["next_source_name"], "Episode 01")
+        self.assertFalse(self.path.exists())
         self.prepare()
         self.assertEqual([path.read_bytes() for path in watched], before)
-        self.assertEqual(self.client.post("/api/project/initialize", params=self.query, headers=self.revision(), json={"category": "Donghua"}).status_code, 409)
 
     def test_discovery_is_nonrecursive_and_new_folders_need_no_manifest(self):
         (self.root / "Empty").mkdir()
@@ -116,17 +129,18 @@ class ServerTests(unittest.TestCase):
         media = self.snapshot()["media"]
         self.assertEqual([row["name"] for row in media], sorted([self.file, "B.MP4"], key=sort_key))
         empty = self.client.get("/api/project", params={"project":"Empty"}, headers=self.headers).json()
-        self.assertFalse(empty["initialized"]); self.assertEqual(empty["sources"], [])
+        self.assertEqual(empty["sources"], [])
         self.assertFalse((self.root / "Empty" / ".clipselector").exists())
 
-    def test_source_names_for_all_categories_and_sequential_defaults(self):
-        for category in CATEGORIES:
-            project = self.client.post("/api/projects", headers=self.headers, json={"name": category, "category": category}).json()
-            self.assertEqual(project["next_source_name"], "Episode 01")
-            for name, next_name in [("Episode 01", "Episode 02"), ("ep02", "Episode 03"), ("OVA 1", "Episode 03")]:
-                response = self.client.post("/api/sources", params={"project": category}, headers={**self.headers,"If-Match": project["revision"]}, json={"name": name})
-                self.assertEqual(response.status_code, 201, response.text)
-                project = response.json(); self.assertEqual(project["next_source_name"], next_name)
+    def test_default_episode_names_and_custom_sources_need_no_project_setup(self):
+        project = self.snapshot()
+        self.assertEqual(project["next_source_name"], "Episode 01")
+        for name, next_name in [("Episode 01", "Episode 02"), ("ep02", "Episode 03"), ("OVA 1", "Episode 03")]:
+            response = self.client.post("/api/sources", params=self.query,
+                headers={**self.headers, "If-Match": project["revision"]}, json={"name": name})
+            self.assertEqual(response.status_code, 201, response.text)
+            project = response.json()
+            self.assertEqual(project["next_source_name"], next_name)
 
     def test_duplicate_create_and_rename_point_to_existing_source(self):
         self.prepare()
@@ -234,8 +248,7 @@ class ServerTests(unittest.TestCase):
     def test_stale_revision_blocks_every_destructive_change(self):
         self.prepare(); self.bookmark(); before=self.path.read_bytes()
         query={**self.query,"source":self.source}; stale={**self.headers,"If-Match":"stale"}
-        responses=[self.client.patch("/api/project",params=self.query,headers=stale,json={"status":"Editing"}),
-          self.client.post("/api/sources",params=self.query,headers=stale,json={"name":"Another"}),
+        responses=[self.client.post("/api/sources",params=self.query,headers=stale,json={"name":"Another"}),
           self.client.patch("/api/source",params=query,headers=stale,json={"name":"Rename","media_file":None}),
           self.client.delete("/api/source",params=query,headers=stale),
           self.client.patch("/api/bookmarks/bookmark-identity-1234",params=query,headers=stale,json={"time":1}),
@@ -255,18 +268,22 @@ class ServerTests(unittest.TestCase):
 
     def test_damaged_metadata_is_not_overwritten_and_other_projects_are_browseable(self):
         self.path.parent.mkdir()
-        for payload in [b"",b"not json",b'{"version":2}',b'{"version":1,"category":"Anime","status":"Discovering","sources":{"EP1":{"media_file":null,"bookmarks":[]},"Episode 01":{"media_file":null,"bookmarks":[]}}}',b'{"version":1,"category":"Anime","status":"Discovering","sources":{},"sources":{}}']:
+        for payload in [b"", b"not json", b'{"version":999}',
+                b'{"version":2,"sources":{"EP1":{"media_file":null,"bookmarks":[]},"Episode 01":{"media_file":null,"bookmarks":[]}}}',
+                b'{"version":2,"sources":{},"sources":{}}']:
             self.path.write_bytes(payload)
-            self.assertEqual(self.client.get("/api/project",params=self.query,headers=self.headers).status_code,500)
-            response=self.client.post("/api/project/initialize",params=self.query,headers={**self.headers,"If-Match":"anything"},json={"category":"Anime"})
-            self.assertEqual(response.status_code,500); self.assertEqual(self.path.read_bytes(),payload)
-            rows=self.client.get("/api/projects",headers=self.headers).json()["projects"]
-            self.assertIn("error",next(row for row in rows if row["name"]==self.project))
+            self.assertEqual(self.client.get("/api/project", params=self.query, headers=self.headers).status_code, 500)
+            response = self.client.post("/api/sources", params=self.query,
+                headers={**self.headers, "If-Match": "anything"}, json={"name": "Episode 01"})
+            self.assertEqual(response.status_code, 500)
+            self.assertEqual(self.path.read_bytes(), payload)
+            rows = self.client.get("/api/projects", headers=self.headers).json()["projects"]
+            self.assertIn("error", next(row for row in rows if row["name"] == self.project))
 
     def test_external_change_during_write_is_detected_before_replacement(self):
         self.prepare()
         changed = json.loads(self.path.read_text())
-        changed["status"] = "Editing"
+        changed["sources"]["External source"] = {"media_file": None, "bookmarks": []}
         payload = json.dumps(changed).encode("utf-8")
         with patch("pocket_clip_selector.storage.os.fsync", side_effect=lambda descriptor: self.path.write_bytes(payload)):
             response = self.bookmark()
@@ -274,16 +291,21 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), payload)
         self.assertEqual(list(self.path.parent.glob(".*.tmp")), [])
 
-    def test_failed_new_project_write_can_be_initialized_without_deleting_folder(self):
+    def test_failed_first_source_write_leaves_project_ready_for_explicit_retry(self):
+        created = self.client.post("/api/projects", headers=self.headers, json={"name": "Recoverable"})
+        self.assertEqual(created.status_code, 201)
+        query = {"project": "Recoverable"}
+        headers = {**self.headers, "If-Match": created.json()["revision"]}
         with self.assertLogs("uvicorn.error", level="ERROR"), patch("pocket_clip_selector.storage.os.replace", side_effect=OSError("disk failure")):
-            response = self.client.post("/api/projects", headers=self.headers, json={"name": "Recoverable", "category": "Anime"})
+            response = self.client.post("/api/sources", params=query, headers=headers, json={"name": "Episode 01"})
         self.assertEqual(response.status_code, 500)
-        snapshot = self.client.get("/api/project", params={"project": "Recoverable"}, headers=self.headers).json()
-        self.assertFalse(snapshot["initialized"])
+        snapshot = self.client.get("/api/project", params=query, headers=self.headers).json()
+        self.assertEqual(snapshot["sources"], [])
         self.assertTrue((self.root / "Recoverable").is_dir())
-        response = self.client.post("/api/project/initialize", params={"project": "Recoverable"}, headers={**self.headers, "If-Match": snapshot["revision"]}, json={"category": "Anime"})
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["initialized"])
+        response = self.client.post("/api/sources", params=query,
+            headers={**self.headers, "If-Match": snapshot["revision"]}, json={"name": "Episode 01"})
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json()["source_count"], 1)
 
     def test_symlink_projects_media_metadata_and_destination_are_blocked(self):
         outside=Path(self.temporary.name).resolve()/"outside"; outside.mkdir(); (outside/"secret.mp4").write_bytes(mp4_bytes())
@@ -304,7 +326,7 @@ class ServerTests(unittest.TestCase):
     def test_all_library_and_mutation_routes_require_controller(self):
         for path in ["/api/projects","/api/project","/api/media-info"]:
             self.assertEqual(self.client.get(path,params={**self.query,"file":self.file}).status_code,423)
-        self.assertEqual(self.client.post("/api/projects",json={"name":"Blocked","category":"Anime"}).status_code,423)
+        self.assertEqual(self.client.post("/api/projects",json={"name":"Blocked"}).status_code,423)
         self.assertEqual(self.client.get("/").status_code,200)
         self.assertEqual(self.client.get("/media",params={**self.query,"file":self.file},headers={"Range":"bytes=0-1"}).status_code,206)
 

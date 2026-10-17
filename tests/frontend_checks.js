@@ -1,4 +1,16 @@
 async function checks(){
+ setup("projects");element("project-name").value="Just a name";
+ transport=async(path,options)=>{
+  equal(path,"/api/projects","project creation endpoint");
+  equal(Object.keys(JSON.parse(options.body)).join(","),"name","project creation only asks for a name");
+  const created=snapshot([],"Episode 01",null);created.name="Just a name";created.sources=[];created.source_count=0;created.next_source_name="Episode 01";
+  return reply(created);
+ };
+ element("project-form").listeners.submit[0](submit);while(state.busy)await Promise.resolve();
+ equal(state.view,"sources","created project opens Sources immediately");
+ equal(element("source-summary").textContent,"0 sources · 0 bookmarks","project header shows content counts");
+ equal(element("new-source").disabled,false,"source creation needs no setup step");
+ openSourceDialog();equal(element("source-name").value,"Episode 01","new project retains episode defaults");element("source-dialog").close();
  setup("quick");
  remember();const saved=JSON.parse(stored.get(preferenceKey));
  equal(saved.project,state.project,"last project is remembered");equal(saved.source,state.source,"last source is remembered");
@@ -71,7 +83,7 @@ async function checks(){
  await saveQuick(submit);equal(state.owned,false,"stale save loses write authority");equal(element("quick-time").value,"1742","takeover rejection preserves entry");equal(element("quick-save").disabled,true,"stale editor cannot save");equal(element("control-notice").hidden,false,"explicit takeover is offered");
  const oldPage=state.page;transport=async(path,options)=>{
   if(path==="/api/controller/takeover"){equal(JSON.parse(options.body).page_id,oldPage,"takeover preserves page identity");return reply({token:"new-token"});}
-  if(path==="/api/projects")return reply({projects:[{name:state.project}],categories:["Anime"]});
+  if(path==="/api/projects")return reply({projects:[{name:state.project}]});
   return reply(snapshot([],"Episode 01",null));
  };
  await acquireControl(true);equal(state.owned,true,"explicit takeover acquires");equal(state.token,"new-token","new token kept in memory");equal(element("quick-time").value,"1742","explicit takeover retains unsaved draft");
@@ -80,11 +92,11 @@ async function checks(){
  transport=async()=>{throw new Error("offline");};await exitEditor();equal(state.owned,true,"unconfirmed exit keeps state");equal(fakeVideo.paused,false,"unconfirmed exit does not pause");
  transport=async(path,options)=>{equal(path,"/api/controller/release","exit explicitly releases");equal(JSON.parse(options.body).token,state.token,"release uses opaque token");return reply({released:true});};
  await exitEditor();equal(state.owned,false,"confirmed exit releases");equal(fakeVideo.paused,true,"confirmed exit pauses");equal(element("gate-title").textContent,"Editor exited","entry gate visible");
- transport=async path=>path==="/api/controller/claim"?reply({token:"reentered-token"}):path==="/api/projects"?reply({projects:[{name:state.project}],categories:["Anime"]}):reply(snapshot());
+ transport=async path=>path==="/api/controller/claim"?reply({token:"reentered-token"}):path==="/api/projects"?reply({projects:[{name:state.project}]}):reply(snapshot());
  await acquireControl();equal(fakeVideo.currentTime,position,"reentry retains playback position");equal(state.view,"player","reentry keeps watch view");
 
  setup("projects");state.project=state.source=state.meta=null;state.owned=false;state.remembered={project:"A show – 日本語",source:"Episode 01"};
- transport=async path=>path==="/api/controller/claim"?reply({token:"launch-token"}):path==="/api/projects"?reply({projects:[{name:"A show – 日本語"}],categories:["Anime"]}):reply(snapshot([],"Episode 01",null));
+ transport=async path=>path==="/api/controller/claim"?reply({token:"launch-token"}):path==="/api/projects"?reply({projects:[{name:"A show – 日本語"}]}):reply(snapshot([],"Episode 01",null));
  await acquireControl();equal(state.view,"quick","new launch restores Quick Log");equal(state.source,"Episode 01","new launch restores source");
 
  setup();const oldEpoch=state.epoch;let resolveLate;
