@@ -17,7 +17,7 @@ def run():
     logs.mkdir(exist_ok=True)
     handler = logging.handlers.RotatingFileHandler(logs / "server.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
-    for name in ("uvicorn", "pocket_clip_selector"):
+    for name in ("uvicorn", "pocket_media_clip_selector"):
         logging.getLogger(name).addHandler(handler)
     print(f"PC: http://127.0.0.1:{settings.port}", flush=True)
     if settings.host in ("0.0.0.0", "::"):
@@ -32,8 +32,8 @@ def run():
     else:
         print(f"Listening on http://{settings.host}:{settings.port}", flush=True)
     print(f"Library: {settings.working_dir}\nLogs: {logs / 'server.log'}", flush=True)
-    uvicorn.run("pocket_clip_selector.api:create_app", factory=True, host=settings.host,
-                port=settings.port, workers=1, reload=args.reload, reload_dirs=[str(REPOSITORY / "pocket_clip_selector")] if args.reload else None,
+    uvicorn.run("pocket_media_clip_selector.api:create_app", factory=True, host=settings.host,
+                port=settings.port, workers=1, reload=args.reload, reload_dirs=[str(REPOSITORY / "pocket_media_clip_selector")] if args.reload else None,
                 log_config=None, access_log=True)
 
 

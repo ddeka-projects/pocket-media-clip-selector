@@ -11,14 +11,14 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from pocket_clip_selector.api import create_app
-from pocket_clip_selector.config import Settings, load_settings
-from pocket_clip_selector.errors import AppError
-from pocket_clip_selector.controller import ControllerOwnership
-from pocket_clip_selector.library import sort_key
-from pocket_clip_selector.mp4 import duration
-from pocket_clip_selector.process_lock import ProcessLock
-from pocket_clip_selector.storage import SCHEMA_VERSION, MAX_SECONDS, source_key, source_name, next_episode, following_episode
+from pocket_media_clip_selector.api import create_app
+from pocket_media_clip_selector.config import Settings, load_settings
+from pocket_media_clip_selector.errors import AppError
+from pocket_media_clip_selector.controller import ControllerOwnership
+from pocket_media_clip_selector.library import sort_key
+from pocket_media_clip_selector.mp4 import duration
+from pocket_media_clip_selector.process_lock import ProcessLock
+from pocket_media_clip_selector.storage import SCHEMA_VERSION, MAX_SECONDS, source_key, source_name, next_episode, following_episode
 from helpers import make_project, mp4_bytes
 
 
@@ -261,7 +261,7 @@ class ServerTests(unittest.TestCase):
         manifest=self.path.parent/"manifest.json"; manifest.write_bytes(b'{"processor":true}')
         files=[self.path,self.root/self.project/self.file,manifest]; before=[path.read_bytes() for path in files]
         for operation in ["os.replace","os.fsync"]:
-            with self.assertLogs("uvicorn.error",level="ERROR"),patch(f"pocket_clip_selector.storage.{operation}",side_effect=OSError("disk failure")):
+            with self.assertLogs("uvicorn.error",level="ERROR"),patch(f"pocket_media_clip_selector.storage.{operation}",side_effect=OSError("disk failure")):
                 self.assertEqual(self.bookmark(70,"failed-bookmark-id").status_code,500)
             self.assertEqual([path.read_bytes() for path in files],before)
             self.assertEqual(list(self.path.parent.glob(".*.tmp")),[])
@@ -285,7 +285,7 @@ class ServerTests(unittest.TestCase):
         changed = json.loads(self.path.read_text())
         changed["sources"]["External source"] = {"media_file": None, "bookmarks": []}
         payload = json.dumps(changed).encode("utf-8")
-        with patch("pocket_clip_selector.storage.os.fsync", side_effect=lambda descriptor: self.path.write_bytes(payload)):
+        with patch("pocket_media_clip_selector.storage.os.fsync", side_effect=lambda descriptor: self.path.write_bytes(payload)):
             response = self.bookmark()
         self.assertEqual(response.status_code, 409)
         self.assertEqual(self.path.read_bytes(), payload)
@@ -296,7 +296,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(created.status_code, 201)
         query = {"project": "Recoverable"}
         headers = {**self.headers, "If-Match": created.json()["revision"]}
-        with self.assertLogs("uvicorn.error", level="ERROR"), patch("pocket_clip_selector.storage.os.replace", side_effect=OSError("disk failure")):
+        with self.assertLogs("uvicorn.error", level="ERROR"), patch("pocket_media_clip_selector.storage.os.replace", side_effect=OSError("disk failure")):
             response = self.client.post("/api/sources", params=query, headers=headers, json={"name": "Episode 01"})
         self.assertEqual(response.status_code, 500)
         snapshot = self.client.get("/api/project", params=query, headers=self.headers).json()

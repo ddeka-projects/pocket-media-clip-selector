@@ -16,7 +16,7 @@ if ($ConfigureFirewall -and -not $principalCheck.IsInRole([Security.Principal.Wi
 if (-not (Test-Path -LiteralPath $windowlessPython -PathType Leaf)) { throw "Run scripts\bootstrap-windows.ps1 first." }
 Push-Location -LiteralPath $repositoryRoot
 try {
-    $configuredPort = & $virtualPython -c "from pocket_clip_selector.config import load_settings; from pocket_clip_selector.library import Library; s=load_settings(); Library(s.working_dir); print(s.port)"
+    $configuredPort = & $virtualPython -c "from pocket_media_clip_selector.config import load_settings; from pocket_media_clip_selector.library import Library; s=load_settings(); Library(s.working_dir); print(s.port)"
     if ($LASTEXITCODE -ne 0) { throw "Correct .env and the library directory before installing startup." }
 } finally { Pop-Location }
 $configuredPort = [int](($configuredPort | Select-Object -Last 1).Trim())

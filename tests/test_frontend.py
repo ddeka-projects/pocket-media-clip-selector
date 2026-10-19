@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-STATIC = ROOT / "pocket_clip_selector" / "static"
+STATIC = ROOT / "pocket_media_clip_selector" / "static"
 
 
 class FrontendTests(unittest.TestCase):

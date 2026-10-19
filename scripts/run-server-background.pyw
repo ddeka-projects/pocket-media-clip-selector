@@ -17,7 +17,7 @@ with (logs / f"startup-{stamp}.log").open("a", encoding="utf-8", buffering=1) as
     os.chdir(root)
     sys.path.insert(0, str(root))
     try:
-        runpy.run_module("pocket_clip_selector", run_name="__main__")
+        runpy.run_module("pocket_media_clip_selector", run_name="__main__")
     except BaseException:
         traceback.print_exc()
         raise

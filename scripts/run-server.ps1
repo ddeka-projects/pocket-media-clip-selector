@@ -10,7 +10,7 @@ Push-Location -LiteralPath $repositoryRoot
 try {
     Write-Host "Starting one server. Use Ctrl+C to stop. Logs: $repositoryRoot\logs\server.log"
     $ErrorActionPreference = "Continue"
-    & $virtualPython -u -m pocket_clip_selector
+    & $virtualPython -u -m pocket_media_clip_selector
     $serverExitCode = $LASTEXITCODE
 } finally { Pop-Location }
 exit $serverExitCode
