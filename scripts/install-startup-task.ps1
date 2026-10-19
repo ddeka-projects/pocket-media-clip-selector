@@ -31,11 +31,20 @@ $taskPrincipal = New-ScheduledTaskPrincipal -UserId $currentIdentity.Name -Logon
 $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -RestartCount 999 `
     -RestartInterval (New-TimeSpan -Minutes 1) -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) `
     -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-$existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-if ($null -ne $existingTask) { Stop-ScheduledTask -TaskName $TaskName }
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $taskPrincipal `
+$existingTask = Get-ScheduledTask -TaskName $TaskName -TaskPath "\" -ErrorAction SilentlyContinue
+if ($null -ne $existingTask) {
+    Stop-ScheduledTask -TaskName $TaskName -TaskPath "\"
+    $deadline = (Get-Date).AddSeconds(30)
+    do {
+        $existingTask = Get-ScheduledTask -TaskName $TaskName -TaskPath "\"
+        if ($existingTask.State -notin @("Running", "Queued")) { break }
+        if ((Get-Date) -ge $deadline) { throw "Timed out stopping '$TaskName'. No replacement server was started." }
+        Start-Sleep -Milliseconds 250
+    } while ($true)
+}
+Register-ScheduledTask -TaskName $TaskName -TaskPath "\" -Action $action -Trigger $trigger -Principal $taskPrincipal `
     -Settings $settings -Description "Serves the local media bookmark app at this user's logon." -Force | Out-Null
-Start-ScheduledTask -TaskName $TaskName
+Start-ScheduledTask -TaskName $TaskName -TaskPath "\"
 Write-Host "Installed and started '$TaskName' as $($currentIdentity.Name), at user logon." -ForegroundColor Green
 Write-Host "Logs: $repositoryRoot\logs. Phone URL: http://<PC IPv4 address from ipconfig>:$configuredPort"
 if (-not $ConfigureFirewall) { Write-Host "Firewall was left as configured. To add Private/LocalSubnet rules, run this script elevated with -ConfigureFirewall." }

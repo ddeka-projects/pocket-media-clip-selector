@@ -63,23 +63,21 @@ You need Windows PowerShell 5.1+, Python 3.10+ from [python.org](https://www.pyt
 
 ## Start automatically at your logon
 
-Stop any foreground instance first. For initial network setup, open **PowerShell as Administrator using the same Windows account**, change to this repository, and run:
+Stop any foreground instance first, then run from ordinary PowerShell in this repository:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process Bypass
-.\scripts\install-startup-task.ps1 -ConfigureFirewall
+powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1
+```
+
+For first-time phone access or after changing the port, run from **PowerShell as Administrator using the same Windows account**:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1 -ConfigureFirewall
 ```
 
 This installs and immediately starts **Pocket Media Clip Selector**. The task runs as the current user with limited privileges at that user's logon, through `.venv\Scripts\pythonw.exe`, without a visible console. It uses `IgnoreNew`, has no runtime limit, continues on battery power, and retries nonzero exits every minute up to 999 times. It does not run as SYSTEM or before sign-in. When installed from an elevated window, it still registers the task at limited privilege for that same account; don't use a different administrator account.
 
 The firewall option creates one inbound TCP rule for the configured port, **Private profile and LocalSubnet only**. Keep your home network marked Private in Windows settings. The rule also works for foreground startup. If a firewall permission dialog appears later, cancel it instead of adding broader Python rules. Check Windows Firewall for pre-existing broad Python rules if you have used Python servers before. No router forwarding or public internet deployment is needed.
-
-Once the firewall is configured, task installation/updating can be run from ordinary PowerShell:
-
-```powershell
-.\scripts\install-startup-task.ps1
-Get-ScheduledTaskInfo -TaskName "Pocket Media Clip Selector"
-```
 
 The app also takes an OS-owned lock for the configured library and binds one fixed port, so accidental second server processes or extra Uvicorn workers fail to start. Use one process / one worker. Do not start a development server while the scheduled server is running. To temporarily switch to foreground development:
 
@@ -93,9 +91,9 @@ Start-ScheduledTask -TaskName "Pocket Media Clip Selector"
 To remove automatic startup:
 
 ```powershell
-.\scripts\remove-startup-task.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1
 # Optional, from elevated PowerShell: also remove this app's firewall rule.
-.\scripts\remove-startup-task.ps1 -RemoveFirewall
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-startup-task.ps1 -RemoveFirewall
 ```
 
 Removal stops and unregisters the task. It leaves media, project metadata, and bookmarks in place. Changing the port requires reinstalling the firewall rule with `-ConfigureFirewall`. Changes to `.env` take effect after a server restart. Reload mode watches Python code; refresh Safari after changing frontend assets.
