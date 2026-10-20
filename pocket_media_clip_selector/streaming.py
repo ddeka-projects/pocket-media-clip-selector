@@ -34,9 +34,14 @@ def media_response(library, project, file, request):
     size = info.st_size
     etag = f'"{info.st_dev:x}-{info.st_ino:x}-{info.st_size:x}-{info.st_mtime_ns:x}"'
     modified = formatdate(info.st_mtime, usegmt=True)
-    headers = {"Accept-Ranges": "bytes", "Content-Length": str(size), "ETag": etag,
-               "Last-Modified": modified, "Cache-Control": "private, no-cache",
-               "Content-Disposition": "inline"}
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(size),
+        "ETag": etag,
+        "Last-Modified": modified,
+        "Cache-Control": "private, no-cache",
+        "Content-Disposition": "inline",
+    }
     start, end = 0, size - 1
     status = 200
     raw = request.headers.get("range") if request.method == "GET" else None
@@ -60,11 +65,17 @@ def media_response(library, project, file, request):
                 start, end = max(0, size - length), size - 1
         if not valid:
             stream.close()
-            return Response(status_code=416, headers={**headers, "Content-Length": "0", "Content-Range": f"bytes */{size}"}, media_type="video/mp4")
+            return Response(
+                status_code=416,
+                headers={**headers, "Content-Length": "0", "Content-Range": f"bytes */{size}"},
+                media_type="video/mp4",
+            )
         status = 206
         headers["Content-Range"] = f"bytes {start}-{end}/{size}"
         headers["Content-Length"] = str(end - start + 1)
     if request.method == "HEAD" or size == 0:
         stream.close()
         return Response(status_code=status, headers=headers, media_type="video/mp4")
-    return OpenFileResponse(stream, start, end - start + 1, status_code=status, headers=headers, media_type="video/mp4")
+    return OpenFileResponse(
+        stream, start, end - start + 1, status_code=status, headers=headers, media_type="video/mp4"
+    )

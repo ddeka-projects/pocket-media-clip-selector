@@ -1,11 +1,16 @@
-"""Manual page ownership; transfers wait for authorized mutations to finish."""
+"""One explicit browser owner; ownership never expires or polls."""
 
 from contextlib import contextmanager
 import re
 import secrets
 import threading
 
-from .errors import AppError
+from .errors import (
+    ControllerError,
+    ControllerOccupiedError,
+    ControllerRequiredError,
+    ControllerTransferredError,
+)
 
 
 class ControllerOwnership:
@@ -14,32 +19,58 @@ class ControllerOwnership:
         self.page = None
         self.token = None
 
-    def claim(self, page: str, *, takeover=False):
-        if not re.fullmatch(r"[A-Za-z0-9_-]{16,128}", page):
-            raise AppError("Invalid page identity.")
+    @contextmanager
+    def claimed(self, page_id, *, takeover=False):
+        if not isinstance(page_id, str) or not re.fullmatch(r"[A-Za-z0-9._~-]{1,128}", page_id):
+            raise ControllerError("Invalid page identity.", 400, "invalid_request")
         with self.lock:
-            if self.page and self.page != page and not takeover:
-                raise AppError("Clip Selector is open elsewhere", 423, "controller_occupied")
-            # A fresh token invalidates every earlier grant, including a delayed
-            # request from this same page after it explicitly re-enters editing.
+            if self.page is not None and self.page != page_id and not takeover:
+                raise ControllerOccupiedError()
+            self.page = page_id
             self.token = secrets.token_urlsafe(32)
-            self.page = page
-            return {"token": self.token}
+            yield {"token": self.token}
 
-    def _authorize(self, page, token):
-        if not self.page:
-            raise AppError("Editor control is no longer held. Take Control to edit here again.", 409, "controller_required")
-        if page != self.page or not token or not token.isascii() or not secrets.compare_digest(token, self.token):
-            raise AppError("Editor control was transferred to another page", 423, "controller_transferred")
+    def claim(self, page_id, *, takeover=False):
+        with self.claimed(page_id, takeover=takeover) as grant:
+            return grant
+
+    def takeover(self, page_id):
+        return self.claim(page_id, takeover=True)
+
+    def _authorize(self, page_id, token):
+        if self.page is None:
+            raise ControllerRequiredError()
+        if (
+            page_id != self.page
+            or not isinstance(token, str)
+            or not token.isascii()
+            or not secrets.compare_digest(token, self.token)
+        ):
+            raise ControllerTransferredError()
+
+    def authorize(self, page_id, token):
+        with self.lock:
+            self._authorize(page_id, token)
 
     @contextmanager
-    def authorized(self, page, token):
+    def authorized(self, page_id, token):
+        # The same lock protects takeover and the entire authorized operation.
         with self.lock:
-            self._authorize(page, token)
+            self._authorize(page_id, token)
             yield
 
-    def release(self, page, token):
+    operation = authorized
+
+    def release(self, page_id, token):
         with self.lock:
-            if self.page:
-                self._authorize(page, token)
+            if self.page is not None:
+                self._authorize(page_id, token)
                 self.page = self.token = None
+
+    def disconnect(self):
+        with self.lock:
+            self.page = self.token = None
+
+    def snapshot(self):
+        with self.lock:
+            return {"claimed": self.page is not None}

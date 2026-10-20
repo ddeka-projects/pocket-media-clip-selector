@@ -1,23 +1,26 @@
-"""Task Scheduler tracks this console-free process and retries nonzero exits."""
+"""Console-free scheduled entry point; the task tracks this server process."""
 
-from datetime import datetime
 import os
 from pathlib import Path
-import runpy
 import sys
-import traceback
 
 root = Path(__file__).resolve().parents[1]
-logs = root / "logs"
-logs.mkdir(exist_ok=True)
-stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
-# Separate files preserve startup errors that occur before application logging.
-with (logs / f"startup-{stamp}.log").open("a", encoding="utf-8", buffering=1) as log:
-    sys.stdout = sys.stderr = log
-    os.chdir(root)
-    sys.path.insert(0, str(root))
-    try:
-        runpy.run_module("pocket_media_clip_selector", run_name="__main__")
-    except BaseException:
-        traceback.print_exc()
-        raise
+os.chdir(root)
+sys.path.insert(0, str(root))
+
+from pocket_media_clip_selector.logging_setup import configure_logging, redirect_standard_streams
+
+configure_logging(console=False)
+redirect_standard_streams()
+try:
+    from pocket_media_clip_selector.app import main
+    raise SystemExit(main())
+except SystemExit:
+    raise
+except BaseException:
+    import logging
+    logging.getLogger(__name__).exception("Background server failed")
+    raise SystemExit(1)
+finally:
+    sys.stdout.flush()
+    sys.stderr.flush()

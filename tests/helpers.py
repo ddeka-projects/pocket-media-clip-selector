@@ -3,7 +3,11 @@ import struct
 
 
 def box(kind, payload, *, extended=False):
-    return (struct.pack(">I4sQ", 1, kind, len(payload) + 16) if extended else struct.pack(">I4s", len(payload) + 8, kind)) + payload
+    return (
+        struct.pack(">I4sQ", 1, kind, len(payload) + 16)
+        if extended
+        else struct.pack(">I4s", len(payload) + 8, kind)
+    ) + payload
 
 
 def mp4_bytes(seconds=120.5, *, version=0, tail=False, extended=False):
@@ -18,7 +22,9 @@ def mp4_bytes(seconds=120.5, *, version=0, tail=False, extended=False):
     return filetype + (payload + movie if tail else movie + payload)
 
 
-def make_project(root: Path, name="A Show – 日本語", file="[Some Group] Episode #1 & café.mp4", seconds=120.5):
+def make_project(
+    root: Path, name="A Show – 日本語", file="[Some Group] Episode #1 & café.mp4", seconds=120.5
+):
     project = root / name
     project.mkdir(exist_ok=True)
     (project / file).write_bytes(mp4_bytes(seconds))

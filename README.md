@@ -1,18 +1,17 @@
 # Pocket Media Clip Selector
 
-Bookmark-first v2 keeps moments from any player in **project → named source → bookmarks**. While watching in VLC, open Quick Log, type a time such as `1742`, and save `17:42` on your Windows PC. No local media is required. Later, link a prepared MP4 to the same source and inspect those moments in the landscape player. Precise editing stays in Premiere Pro.
+Keep moments from any player in **project → named source → bookmarks**. While watching in VLC, open Quick Log, type a time such as `1742`, and save `17:42` on your Windows PC. No local media is required. Later, link a prepared MP4 to the same source and inspect those moments in the landscape player. Precise editing stays in Premiere Pro.
 
 The app uses Python, FastAPI, Uvicorn, and vanilla HTML/CSS/JavaScript. It has no frontend build step, database, accounts, cloud service, media conversion, or final clip export. The PC must stay awake and the server must be running.
 
 ## Windows setup
 
-You need Windows PowerShell 5.1+, Python 3.10+ from [python.org](https://www.python.org/downloads/windows/). For local playback, use prepared H.264 MP4 videos with Safari-compatible audio. Use an ordinary Windows account that can create project folders and write their metadata, as well as read any local media. Keep the repository outside the media working directory; use a local disk for the library. Safari 15.4+ is required for the built-in dialogs.
+You need Windows PowerShell 5.1+, Python 3.11+ from [python.org](https://www.python.org/downloads/windows/). For local playback, use prepared H.264 MP4 videos with Safari-compatible audio. Use an ordinary Windows account that can create project folders and write their metadata, as well as read any local media. Keep the repository outside the media working directory; use a local disk for the library. Safari 15.4+ is required for the built-in dialogs.
 
-1. Open PowerShell in this repository. If Windows blocks local scripts, allow them for this window:
+1. Open ordinary PowerShell in this repository and prepare the local environment:
 
    ```powershell
-   Set-ExecutionPolicy -Scope Process Bypass
-   .\scripts\bootstrap-windows.ps1
+   powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap-windows.ps1
    ```
 
    Bootstrap creates `.venv`, installs the pinned runtime requirements, and creates `.env` if it is missing. It does not download or install Python itself, and it preserves an existing `.env`.
@@ -20,12 +19,12 @@ You need Windows PowerShell 5.1+, Python 3.10+ from [python.org](https://www.pyt
 2. Edit `.env`:
 
    ```dotenv
-   WORKING_DIR=D:\MediaProjects
-   HOST=0.0.0.0
-   PORT=8767
+   POCKET_MEDIA_CLIP_SELECTOR_WORKING_DIRECTORY=D:\MediaProjects
+   POCKET_MEDIA_CLIP_SELECTOR_HOST=0.0.0.0
+   POCKET_MEDIA_CLIP_SELECTOR_PORT=8767
    ```
 
-   The directory must already exist. Backslashes are literal; don't double them. Paths with spaces or Unicode work, with optional surrounding quotes. Real environment variables override `.env`. `HOST=0.0.0.0` listens on the PC's IPv4 interfaces. `127.0.0.1` is useful for PC-only checks, but your phone cannot reach that address.
+   The directory must already exist. Backslashes are literal; don't double them. Paths with spaces or Unicode work, with optional matching quotes. `.env` accepts UTF-8 with an optional BOM. Values are literal: `$`, `%`, and backslashes are preserved without expansion; duplicate assignments are rejected. Real environment variables override `.env`. `POCKET_MEDIA_CLIP_SELECTOR_HOST=0.0.0.0` listens on the PC's IPv4 interfaces. `127.0.0.1` is useful for PC-only checks, but your phone cannot reach that address.
 
 3. Organize the library like this:
 
@@ -48,14 +47,12 @@ You need Windows PowerShell 5.1+, Python 3.10+ from [python.org](https://www.pyt
 4. Start in the foreground:
 
    ```powershell
-   .\scripts\run-dev.ps1
+   powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1
    # Optional Python-code reload while developing:
-   .\scripts\run-dev.ps1 -Reload
-   # Normal foreground operation, no reload:
-   .\scripts\run-server.ps1
+   powershell -ExecutionPolicy Bypass -File .\scripts\run-dev.ps1 -Reload
    ```
 
-   Startup prints the PC and local-network URLs. Open `http://127.0.0.1:8767` on the PC. On your iPhone, connect to the same Wi-Fi and open a printed `http://<PC IPv4 address>:8767` URL in Safari. If several addresses appear, use the IPv4 address for your active Wi-Fi/Ethernet adapter (`ipconfig`). Use your configured port if you changed it. Stop a foreground server with Ctrl+C.
+   Startup reports the configured listen address. Open `http://127.0.0.1:8767` on the PC. On your iPhone, connect to the same Wi-Fi and open `http://<PC IPv4 address>:8767` in Safari. Find the IPv4 address for your active Wi-Fi/Ethernet adapter with `ipconfig`. Use your configured port if you changed it. Stop a foreground server with Ctrl+C.
 
 5. In Safari, use **Share → Add to Home Screen**. Enable **Open as Web App** if that option appears. Tap **Exit Editor** in Safari and close that tab, then launch **Clip Selector** from its Home Screen icon. If it says the editor is open elsewhere, tap **Take Control**. Turn off Portrait Orientation Lock and rotate the phone to landscape when watching local MP4s. The player is designed around the iPhone 15 Pro's landscape viewport, with space for the notch and home indicator. Project browsing and Quick Log work in portrait.
 
@@ -75,18 +72,13 @@ For first-time phone access or after changing the port, run from **PowerShell as
 powershell -ExecutionPolicy Bypass -File .\scripts\install-startup-task.ps1 -ConfigureFirewall
 ```
 
-This installs and immediately starts **Pocket Media Clip Selector**. The task runs as the current user with limited privileges at that user's logon, through `.venv\Scripts\pythonw.exe`, without a visible console. It uses `IgnoreNew`, has no runtime limit, continues on battery power, and retries nonzero exits every minute up to 999 times. It does not run as SYSTEM or before sign-in. When installed from an elevated window, it still registers the task at limited privilege for that same account; don't use a different administrator account.
+This installs and immediately starts **Pocket Media Clip Selector**. The task runs as the current user with limited privileges at that user's logon, through `.venv\Scripts\pythonw.exe`, without a visible console. It uses `IgnoreNew`, has no runtime limit, continues on battery power, and retries errors up to three times at one-minute intervals. When installed from an elevated window, it still registers the task at limited privilege for that same account; don't use a different administrator account.
 
-The firewall option creates one inbound TCP rule for the configured port, **Private profile and LocalSubnet only**. Keep your home network marked Private in Windows settings. The rule also works for foreground startup. If a firewall permission dialog appears later, cancel it instead of adding broader Python rules. Check Windows Firewall for pre-existing broad Python rules if you have used Python servers before. No router forwarding or public internet deployment is needed.
+The optional firewall rule allows the configured TCP port only from `LocalSubnet` on the **Private** profile. Normal installation leaves firewall rules untouched. Keep the Windows network marked Private and use the PC's LAN address on the phone.
 
-The app also takes an OS-owned lock for the configured library and binds one fixed port, so accidental second server processes or extra Uvicorn workers fail to start. Use one process / one worker. Do not start a development server while the scheduled server is running. To temporarily switch to foreground development:
+One running server reserves the configured library, even when a second copy uses another port. The operating system releases this guard when the process exits or crashes. Use one server/worker and stop the scheduled task before foreground development.
 
-```powershell
-Stop-ScheduledTask -TaskName "Pocket Media Clip Selector"
-.\scripts\run-dev.ps1
-# After stopping development with Ctrl+C:
-Start-ScheduledTask -TaskName "Pocket Media Clip Selector"
-```
+After updating application code, rerun bootstrap to apply any dependency changes, then double-click **`restart-server.cmd`** in the repository root. It stops **Pocket Media Clip Selector**, waits for it to stop, starts it, and verifies a fresh `/health` response from this app. It requests UAC elevation only if Windows denies task-management permission. Success, cancellation, and failures stay visible until you press Enter. Finish active saves first. Reinstall the task after changing startup scripts or moving the repository.
 
 To remove automatic startup:
 
@@ -147,7 +139,7 @@ A project gets `.clipselector\project.json` when its first source is saved. Unti
 
 Source names are the identities and JSON keys. A rename atomically replaces the key while keeping the association and bookmarks. `media_file` is an exact filename or null, separate from source identity. Bookmark IDs protect explicit retries from duplicate writes. A missing or renamed MP4 never erases/relabels its source or bookmarks. The app does not detect replacement content under the same filename.
 
-The independent processor's `.clipselector\manifest.json`, `Source\` files, and prepared MP4s are untouched. Metadata uses schema version 2 without compatibility or migration for the earlier category/status format. To start fresh with an older development project, stop the server and move or remove only its `.clipselector\project.json`, then restart and refresh. This resets that project's stored sources/bookmarks; media and the processor manifest stay in place. Old `.clipselector\selections.json` is ignored and left in place. A damaged/unsupported new `project.json`, duplicate JSON key, or invalid stored bookmark is reported and never overwritten. Other projects remain browseable.
+The independent processor's `.clipselector\manifest.json`, `Source\` files, and prepared MP4s are untouched. Metadata uses schema version 2. A damaged or unsupported `project.json`, duplicate JSON key, or invalid stored bookmark is reported and never overwritten. Other projects remain browseable.
 
 Source and bookmark mutations save on the PC using a serialized fresh read, temporary-file write, flush/fsync, revision recheck, and atomic replacement. Revisions are SHA-256 hashes of the stored bytes, using the hash of empty bytes when no metadata file exists yet. Back up `project.json` with the project. An interrupted write may leave a harmless `.project-*.tmp` file; remove it only after stopping the server. Project creation only creates a folder. If saving its first source fails, the folder stays usable; explicitly retry that source save.
 
@@ -171,7 +163,7 @@ Project-specific routes use the exact project query parameter; source/bookmark r
 
 ## Editor ownership and uncertain saves
 
-One page owns editing until it explicitly exits, another page takes control, or the server restarts. The first page automatically claims an unoccupied editor. Other pages show **Take Control**; only an explicit tap transfers ownership. **Exit Editor** releases and pauses playback after the PC confirms it. **Enter Editor** resumes this page's view, draft, and loaded playback position.
+One page controls browsing and editing until it explicitly exits, another page takes control, or the server restarts. The first page automatically claims an unoccupied editor. Other pages show **Take Control**; only an explicit tap transfers ownership. **Exit Editor** releases and pauses playback after the PC confirms it. **Enter Editor** resumes this page's view, draft, and loaded playback position.
 
 Page identities and tokens remain in memory. Browser local storage contains only the last project/source names. Reloading or duplicating a page creates a new identity, so it may require Take Control even when the old page has disappeared. A vanished owner is recovered explicitly. There is no heartbeat, expiry, auto-takeover, background polling, or network monitoring. Safari itself may suspend playback or terminate a page; app lifecycle events do not send ownership requests or force a pause.
 
@@ -181,11 +173,11 @@ A lost connection may hide a write that actually completed. Quick Log keeps the 
 
 ## Logs and troubleshooting
 
-Logs stay in `logs\` beside the code. `server.log` rotates at 5 MiB with three backups. Console-free startup also records `startup-*.log` files.
+Logs, including startup failures, go to `logs\server.log` beside the code. The file rotates at 5 MiB with three backups.
 
 | Symptom | Check |
 | --- | --- |
-| PC URL fails | `.env`, Python/bootstrap, startup logs, task state, duplicate server/library lock |
+| PC URL fails | `.env`, Python/bootstrap, server log, task state, duplicate server/library lock |
 | PC works; iPhone cannot connect | Same LAN, PC awake, active adapter IPv4, Private network/firewall, guest Wi-Fi isolation |
 | Open elsewhere after reload | Explicitly Take Control; the previous page identity does not expire |
 | Save fails | Free disk space, folder creation/metadata permissions, valid `project.json`, server log |
@@ -195,8 +187,11 @@ Logs stay in `logs\` beside the code. `server.log` rotates at 5 MiB with three b
 
 ## Automated verification
 
+Install development dependencies, including Black 25.1.0, then check formatting and run the suite:
+
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m black --check .
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
@@ -204,7 +199,7 @@ The suite covers name-only project creation, immediately usable existing folders
 
 Frontend checks run under Node.js when available or the development Mac's JavaScriptCore. They cover the timestamp table and invalid/boundary inputs, remembered names without saved tokens, Quick Log validation/Done submission/double-save guards/failed-save retention, idempotent retry, preserving newly typed input during a save, fractional local bookmarks, seek without auto-stop, speed acceptance/rejection, explicit Exit/Enter/takeover, stale responses, and lifecycle events with no polling. The app requires no Node.js or build tools.
 
-Development verification used Python 3.13: **45 tests passed, one Windows junction test skipped**. A live Uvicorn/WebKit workflow exercised name-only project creation, immediate use of existing folders without setup, source creation, no-media Quick Log, duplicate source handling, rename/remove, bookmark editing, offline failure, a committed write with a lost response and explicit retry, remembered Quick Log after reload, later MP4 linking, Link & Watch, transport/speed/bookmark navigation, explicit controller takeover, and processor-file preservation. Layout checks used 393 × 852 portrait, 852 × 393 landscape with both notch orientations and conservative safe areas, a shorter 852 × 340 viewport, and 1280 × 900 desktop. Normal iPhone-sized landscape editing fits without scrolling. Safe areas and media playback were simulated; physical iPhone decoding, numeric keyboard behavior, and Windows startup still need the checks below.
+Portable PowerShell tests exercise the real scripts with disposable OS adapters. They skip automatically if PowerShell is unavailable; `POCKET_TEST_POWERSHELL` can point to an installed executable. These checks do not register real tasks or change firewall rules. Actual Windows logon, console-free startup, UAC, firewall behavior, and physical iPhone playback still need the checks below.
 
 ## Real Windows / iPhone checklist
 
@@ -218,4 +213,4 @@ Development verification used Python 3.13: **45 tests passed, one Windows juncti
 - [ ] Open another page/device, explicitly transfer ownership, and try a stale write. Confirm rejection, preserved draft/frame, no auto-takeover/polling, and working Exit/Enter. Background/switch apps/lock the phone; distinguish Safari's own suspension/termination from app behavior.
 - [ ] Reload/restart the PC server and verify confirmed metadata persists. Finish/export outside the working project folder, then manually delete the completed folder and verify it disappears on Refresh.
 
-The application remains a personal, LAN-only tool. The Windows deployment scripts and MP4 byte-streaming implementation are retained; the v2 redesign changes the project metadata, API, and bookmark interface.
+The current module responsibilities and operating guarantees are described in [docs/design.md](docs/design.md).

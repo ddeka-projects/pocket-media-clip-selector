@@ -1,16 +1,16 @@
 #requires -Version 5.1
 [CmdletBinding()]
-param()
-Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-$repositoryRoot = Split-Path -Parent $PSScriptRoot
-$virtualPython = Join-Path $repositoryRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $virtualPython -PathType Leaf)) { throw "Run scripts\bootstrap-windows.ps1 first." }
-Push-Location -LiteralPath $repositoryRoot
+param([switch]$Reload)
+. (Join-Path $PSScriptRoot "windows-common.ps1")
+if ($Reload -and -not $PocketSupportsReload) { throw "Automatic code reload is not available for this app. Restart the foreground server after code changes." }
+$python = Get-PocketPython
+$arguments = @("-u", "-B", "-m", $PocketPackage)
+if ($Reload) { $arguments += "--reload" }
+Push-Location -LiteralPath $PocketRoot
 try {
-    Write-Host "Starting one server. Use Ctrl+C to stop. Logs: $repositoryRoot\logs\server.log"
     $ErrorActionPreference = "Continue"
-    & $virtualPython -u -m pocket_media_clip_selector
-    $serverExitCode = $LASTEXITCODE
-} finally { Pop-Location }
-exit $serverExitCode
+    & $python @arguments
+    $exitCode = $LASTEXITCODE
+}
+finally { Pop-Location }
+exit $exitCode

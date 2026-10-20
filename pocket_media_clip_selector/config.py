@@ -1,52 +1,50 @@
-"""Small literal .env reader; Windows backslashes are never interpreted."""
+"""Validated app settings, independent of the launcher's working directory."""
 
 from dataclasses import dataclass
-import os
 from pathlib import Path
 
+from .env import load_env
+from .library import reject_link
+
 REPOSITORY = Path(__file__).resolve().parents[1]
+PREFIX = "POCKET_MEDIA_CLIP_SELECTOR_"
 
 
 @dataclass(frozen=True)
 class Settings:
-    working_dir: Path
+    working_directory: Path
     host: str = "0.0.0.0"
     port: int = 8767
 
 
-def load_settings(env_file: Path = REPOSITORY / ".env") -> Settings:
-    values = {}
-    if env_file.exists():
-        for number, line in enumerate(env_file.read_text(encoding="utf-8-sig").splitlines(), 1):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" not in line:
-                raise ValueError(f"Invalid .env line {number}; expected NAME=value.")
-            key, value = line.split("=", 1)
-            value = value.strip()
-            if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-                value = value[1:-1]
-            values[key.strip()] = value
-    values.update({key: os.environ[key] for key in ("WORKING_DIR", "HOST", "PORT") if key in os.environ})
-    raw = values.get("WORKING_DIR", "")
+def load_settings(env_file=None, *, environ=None):
+    values = load_env(
+        Path(env_file) if env_file is not None else REPOSITORY / ".env", environ=environ
+    )
+    raw = values.get(PREFIX + "WORKING_DIRECTORY", "").strip()
     if not raw:
-        raise ValueError("Set WORKING_DIR in .env to your existing media directory.")
-    working_dir = Path(raw)
-    if not working_dir.is_absolute():
-        raise ValueError("WORKING_DIR must be an absolute path, such as D:\\MediaProjects.")
-    if not working_dir.is_dir():
-        raise ValueError(f"WORKING_DIR does not exist or is not readable: {working_dir}")
-    resolved = working_dir.resolve()
-    if resolved == REPOSITORY or REPOSITORY.is_relative_to(resolved) or resolved.is_relative_to(REPOSITORY):
-        raise ValueError("Keep the repository and WORKING_DIR in separate directories.")
-    host = values.get("HOST", "0.0.0.0").strip()
-    if not host:
-        raise ValueError("HOST cannot be empty.")
+        raise ValueError(f"Set {PREFIX}WORKING_DIRECTORY to your existing media directory.")
+    directory = Path(raw)
+    if not directory.is_absolute() or not directory.is_dir():
+        raise ValueError(
+            f"{PREFIX}WORKING_DIRECTORY must be an absolute existing directory: {directory}"
+        )
+    for component in (*reversed(directory.parents), directory):
+        reject_link(component)
+    resolved = directory.resolve()
+    if (
+        resolved == REPOSITORY
+        or REPOSITORY.is_relative_to(resolved)
+        or resolved.is_relative_to(REPOSITORY)
+    ):
+        raise ValueError("Keep the repository and media working directory separate.")
+    host = values.get(PREFIX + "HOST", "0.0.0.0").strip()
+    if not host or any(character.isspace() for character in host):
+        raise ValueError(f"{PREFIX}HOST must be a hostname or IP address.")
     try:
-        port = int(values.get("PORT", "8767"))
+        port = int(values.get(PREFIX + "PORT", "8767"))
     except ValueError as error:
-        raise ValueError("PORT must be an integer between 1 and 65535.") from error
+        raise ValueError(f"{PREFIX}PORT must be an integer between 1 and 65535.") from error
     if not 1 <= port <= 65535:
-        raise ValueError("PORT must be between 1 and 65535.")
-    return Settings(working_dir, host, port)
+        raise ValueError(f"{PREFIX}PORT must be between 1 and 65535.")
+    return Settings(resolved, host, port)

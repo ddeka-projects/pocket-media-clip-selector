@@ -49,4 +49,8 @@ def duration(stream, size):
             value = ticks / scale if scale else 0
             if ticks != unknown and math.isfinite(value) and value > 0:
                 return value
-    raise AppError("Cannot read this MP4's duration. Use a prepared, non-fragmented MP4 with a movie header.", 422, "invalid_media")
+    raise AppError(
+        "Cannot read this MP4's duration. Use a prepared, non-fragmented MP4 with a movie header.",
+        422,
+        "invalid_media",
+    )

@@ -1,5 +1,5 @@
-import { formatTime, clampSeek, acceptedRate } from "/assets/player.js";
-import { parseTimestamp, formatBookmark, compactTimestamp } from "/assets/bookmarks.js";
+import { formatTime, clampSeek, acceptedRate } from "/static/player.js";
+import { parseTimestamp, formatBookmark, compactTimestamp } from "/static/bookmarks.js";
 
 const $ = (id) => document.getElementById(id);
 const video = $("video");
@@ -81,8 +81,7 @@ function loseControl(message) {
   state.owned = false; state.token = null; state.epoch += 1;
   for (const name of dialogs) if ($(`${name}-dialog`).open) $(`${name}-dialog`).close();
   $("connection").textContent = "Control not held"; $("connection").classList.remove("live");
-  if ($("workspace").hidden) showGate(message, "Tap Take Control to save on this page.", { takeover: true });
-  else { $("control-message").textContent = message; $("control-notice").hidden = false; }
+  showGate(message, "Tap Take Control to use this page again.", { takeover: true });
   render();
 }
 function handleError(error) {

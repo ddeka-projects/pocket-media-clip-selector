@@ -80,7 +80,7 @@ async function checks(){
  equal(state.remembered,null,"removed source is not offered as a remembered shortcut");equal(state.view,"sources","removed source returns to Sources");
 
  setup("quick");input("1742");transport=async()=>reply({error:{code:"controller_transferred",message:"Editor control was transferred to another page"}},false);
- await saveQuick(submit);equal(state.owned,false,"stale save loses write authority");equal(element("quick-time").value,"1742","takeover rejection preserves entry");equal(element("quick-save").disabled,true,"stale editor cannot save");equal(element("control-notice").hidden,false,"explicit takeover is offered");
+ await saveQuick(submit);equal(state.owned,false,"stale save loses write authority");equal(element("quick-time").value,"1742","takeover rejection preserves entry");equal(element("quick-save").disabled,true,"stale editor cannot save");equal(element("workspace").hidden,true,"stale page is gated");equal(element("gate-take-control").hidden,false,"explicit takeover is offered");
  const oldPage=state.page;transport=async(path,options)=>{
   if(path==="/api/controller/takeover"){equal(JSON.parse(options.body).page_id,oldPage,"takeover preserves page identity");return reply({token:"new-token"});}
   if(path==="/api/projects")return reply({projects:[{name:state.project}]});
